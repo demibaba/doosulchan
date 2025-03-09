@@ -45,27 +45,27 @@ export default function Layout() {
       <BottomSheetModalProvider>
         <Stack>
           {/* index.tsx → AuthScreen 리다이렉트 */}
-          <Stack.Screen name="index" options={{ headerShown: true }} />
+          <Stack.Screen name="index" options={{ headerShown: false }} />
   
           {/* AuthScreen (로그인+회원가입 합친 화면) */}
-          <Stack.Screen name="AuthScreen" options={{ headerShown: true }} />
+          <Stack.Screen name="AuthScreen" options={{ headerShown: false }} />
   
           {/* 기타 스크린들 */}
-          <Stack.Screen name="calendar" options={{ headerShown: true }} />
+          <Stack.Screen name="calendar" options={{ headerShown: false }} />
           <Stack.Screen 
             name="diary/[date]" 
             options={{ 
               title: "다이어리 작성",
-              headerShown: true
+              headerShown: false
           }} 
 />
           <Stack.Screen
             name="spouse-registration"
-            options={{ title: "부부 등록" }}
+            options={{ title: "부부 등록", headerShown: false }}
           />
           <Stack.Screen
             name="screens/WeeklyDiaryScreen"
-            options={{ title: "최근 7일 다이어리" }}
+            options={{ title: "최근 7일 다이어리", headerShown: false }}
           />       
         </Stack>
       </BottomSheetModalProvider>

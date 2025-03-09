@@ -1,6 +1,6 @@
 // app/calendar.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, TouchableOpacity, ScrollView, Animated, PanResponder, Easing } from "react-native";
+import { View, StyleSheet, TouchableOpacity, ScrollView, Animated, PanResponder, Easing, Dimensions } from "react-native";
 import { useRouter } from "expo-router";
 import DefaultText from "./components/DefaultText";
 import { auth, db } from "../config/firebaseConfig";
@@ -22,8 +22,10 @@ export default function CalendarPage() {
   const calendarAnimation = useRef(new Animated.Value(0)).current;
   const [animationProgress, setAnimationProgress] = useState(0); // 드래그 진행 상태 추적
   const dragX = useRef(new Animated.Value(0)).current;
-
-
+  const [nextMonth, setNextMonth] = useState<Date | null>(null);
+  const [prevMonth, setPrevMonth] = useState<Date | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
+  const { width } = Dimensions.get('window');
 
   // 일주일치 다이어리 가져오기 버튼 핸들러
   const handleWeeklyDiaryPress = () => {
@@ -57,24 +59,27 @@ export default function CalendarPage() {
       console.error('요청 확인 오류:', error);
     }
   };
-  // 3. 월 변경 애니메이션 함수 추가 (useEffect 위쪽에 추가)
   const changeMonth = (direction: 'next' | 'prev') => {
+    if (transitioning) return;
     setIsMonthChanging(true);
-    setAnimationDirection(direction);
-
     
     // 애니메이션 방향 설정
-    setAnimationDirection(direction === 'next' ? 'slide-left' : 'slide-right');
-    // 시작 위치 설정 (방향에 따라 화면 좌/우측에서 시작)
-    dragX.setValue(direction === 'next' ? -50 : 50);
-  
-    // 애니메이션 실행 - 스트레치 효과와 함께
-    Animated.spring(dragX, {
-      toValue: 0,
-      useNativeDriver: true,
-      friction: 7,  // 마찰 - 값이 작을수록 더 많이 튕김
-      tension: 40,  // 장력 - 값이 클수록 더 빠르게 움직임
-    }).start(() => {
+    setAnimationDirection(direction);
+    // 화면 너비 가져오기 (Dimensions에서 가져오는 것이 좋지만, 임시로 300 사용)
+    const screenWidth = 300;
+    // 하드코딩된 값 대신 실제 화면 너비 사용
+    const { width } = Dimensions.get('window');
+    const targetValue = direction === 'next' ? -width : width;// 시작 위치 설정 (방향에 따라 화면 좌/우측에서 시작)
+        
+    
+    
+      // 애니메이션 실행
+      Animated.timing(dragX, {
+        toValue: targetValue,
+        duration: 300,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start(() => {
       // 애니메이션 완료 후 실제 월 변경
       setCurrentMonth(new Date(
         currentMonth.getFullYear(),
@@ -83,8 +88,8 @@ export default function CalendarPage() {
       ));
       
       // 상태 초기화
-      setIsMonthChanging(false);
       dragX.setValue(0);
+      setTransitioning(false);
     });
   };
 
@@ -98,7 +103,15 @@ export default function CalendarPage() {
       checkPendingRequests();
     }
   }, [menuVisible]);
-
+  useEffect(() => {
+    const next = new Date(currentMonth);
+    next.setMonth(next.getMonth() + 1);
+    setNextMonth(next);
+    
+    const prev = new Date(currentMonth);
+    prev.setMonth(prev.getMonth() - 1);
+    setPrevMonth(prev);
+  }, [currentMonth]);
   // 바텀 시트 열기 - 부분적으로 열린 상태
   const openBottomSheet = () => {
     Animated.timing(bottomSheetHeight, {
@@ -205,6 +218,7 @@ export default function CalendarPage() {
       easing: Easing.out(Easing.cubic),
     }).start();
   }, [menuVisible]);
+  
 
   // 바텀 시트 PanResponder 설정
   const panResponder = useRef(
@@ -333,51 +347,49 @@ export default function CalendarPage() {
   }, [currentMonth, auth.currentUser]);
 
   // 제스처 설정 - 좌우 스와이프로 월 변경
-// 3. 진행 중인 드래그 제스처 처리 함수 (평소보다 더 쭉 당겨지는 느낌을 줌)
-const swipeGesture = Gesture.Pan()
-  .runOnJS(true)
-  .onBegin(() => {
-    // 드래그 시작 시 설정
-    if (!isMonthChanging) {
+  // 수정된 swipeGesture
+  const swipeGesture = Gesture.Pan()
+    .runOnJS(true)
+    .onBegin(() => {
+      if (transitioning) return;
       dragX.setValue(0);
-    }
-  })
-  .onUpdate((event) => {
-    // 드래그 중에 실시간으로 위치 업데이트
-    if (!isMonthChanging) {
-      // 드래그 저항 추가 (완전히 1:1로 움직이지 않고 저항 추가)
-      // 값을 나눠서 드래그 거리보다 실제 이동하는 거리가 작게 함
-      dragX.setValue(event.translationX / 2.5);
+    })
+    .onUpdate((event) => {
+      if (transitioning) return;
+      // 드래그 저항 줄이기 (더 자연스러운 움직임)
+      dragX.setValue(event.translationX);
       
-      // 애니메이션 진행 상태 업데이트 (백분율)
-      if (Math.abs(event.translationX) > 20) {
+      // 드래그 방향에 따라 애니메이션 방향 설정
+      if (Math.abs(event.translationX) > 15) {
         const direction = event.translationX > 0 ? 'prev' : 'next';
         setAnimationDirection(direction);
       }
-    }
-  })
-  .onEnd((event) => {
-    if (isMonthChanging) return;
-    
-    // 충분히 드래그했으면 월 변경
-    if (Math.abs(event.translationX) > 80) {
-      if (event.translationX > 0) {
-        // 오른쪽으로 스와이프 - 이전 달
-        changeMonth('prev');
+    })
+    .onEnd((event) => {
+      if (transitioning) return;
+      
+      // 화면 너비의 20%를 기준으로 전환 여부 결정
+      const threshold = 60; // 임시로 60px 사용, 실제로는 화면 너비의 20% 정도로 설정하는 것이 좋음
+      
+      if (Math.abs(event.translationX) > threshold) {
+        // 충분히 스와이프한 경우
+        if (event.translationX > 0) {
+          // 오른쪽으로 스와이프 - 이전 달
+          changeMonth('prev');
+        } else {
+          // 왼쪽으로 스와이프 - 다음 달
+          changeMonth('next');
+        }
       } else {
-        // 왼쪽으로 스와이프 - 다음 달
-        changeMonth('next');
+        // 충분히 드래그하지 않았을 때 원래 위치로 복귀
+        Animated.spring(dragX, {
+          toValue: 0,
+          useNativeDriver: true,
+          friction: 10,
+          tension: 50
+        }).start();
       }
-    } else {
-      // 충분히 드래그하지 않았으면 원래 위치로 복귀
-      Animated.spring(dragX, {
-        toValue: 0,
-        useNativeDriver: true,
-        friction: 7,
-        tension: 40,
-      }).start();
-    }
-  });
+    });
 
   // 날짜 클릭 핸들러
   const handleDatePress = async (date: Date) => {
@@ -434,9 +446,9 @@ const swipeGesture = Gesture.Pan()
   };
 
   // 달력 렌더링 로직
-  const renderCalendar = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
+  const renderCalendarForMonth = (monthDate: Date) => {
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
     
     // 월의 첫 날과 마지막 날
     const firstDayOfMonth = new Date(year, month, 1);
@@ -567,31 +579,58 @@ const swipeGesture = Gesture.Pan()
           </DefaultText>
         </View>
         
-        {/* 달력 본문 */}
-        <Animated.View 
+        {/* 달력 컨테이너 - 이 부분이 핵심 변경사항입니다 */}
+      <View style={styles.calendarContainer}>
+        {/* 이전 달 */}
+        <Animated.View
           style={[
-            styles.calendarContent,
+            styles.calendarPage,
             {
-              transform: [
-                {
-                  translateX: calendarAnimation.interpolate({
-                    inputRange: [0, 0.5, 1],
-                    outputRange: 
-                      animationDirection === 'slide-right' 
-                        ? [-20, 100, 0] // 이전 달로 이동 시
-                        : [20, -100, 0], // 다음 달로 이동 시
-                  })
-                }
-              ],
-              opacity: calendarAnimation.interpolate({
-                inputRange: [0, 0.2, 0.8, 1],
-                outputRange: [1, 0.7, 0.7, 1]
-              })
+              transform: [{
+                translateX: dragX.interpolate({
+                  inputRange: [-width, 0, width],
+                  outputRange: [-width*2, -width, 0],
+                  extrapolate: 'clamp',
+                })
+              }]
             }
           ]}
         >
-          {renderCalendar()}
+          {prevMonth && renderCalendarForMonth(prevMonth)}
         </Animated.View>
+        
+        {/* 현재 달 */}
+        <Animated.View
+          style={[
+            styles.calendarContent,
+            {
+              transform: [{
+                translateX: dragX
+              }]
+            }
+          ]}
+        >
+          {renderCalendarForMonth(currentMonth)}
+        </Animated.View>
+        
+        {/* 다음 달 */}
+        <Animated.View
+          style={[
+            styles.calendarPage,
+            {
+              transform: [{
+                translateX: dragX.interpolate({
+                  inputRange: [-width, 0, width],
+                  outputRange: [0, width, width*2],
+                  extrapolate: 'clamp',
+                })
+              }]
+            }
+          ]}
+        >
+          {nextMonth && renderCalendarForMonth(nextMonth)}
+        </Animated.View>
+      </View>
         
         {/* 하단 고정 버튼 영역 - 일주일치 다이어리 버튼만 표시
         <View style={styles.buttonFixedContainer}>
@@ -891,12 +930,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
+  // 스타일에 추가
+  calendarContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  calendarPage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#fff',  // 배경색 추가
+    zIndex: 1,
+  },
+  
   monthText: {
     fontSize: 20,
     fontWeight: "bold",
+    textAlign: 'center',
   },
   calendarContent: {
     flex: 1,
+    backgroundColor: '#fff',
+    overflow: 'hidden', // 애니메이션 중 내용이 넘치지 않도록
+    zIndex: 2, 
   },
   weekHeader: {
     flexDirection: "row",
