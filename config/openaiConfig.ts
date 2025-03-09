@@ -1,0 +1,2 @@
+  // config/openaiConfig.ts
+export const OPENAI_API_KEY = "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";
