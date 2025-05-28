@@ -1,46 +1,53 @@
-// app/calendar.tsx
+// app/calendar.tsx - 고급 감성 웜톤 최종 버전
 import React, { useState, useEffect, useRef } from "react";
-import { View, StyleSheet, TouchableOpacity, ScrollView, Animated, PanResponder, Easing, Dimensions } from "react-native";
+import { View, StyleSheet, TouchableOpacity, ScrollView, Animated, PanResponder, Easing, Dimensions, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import DefaultText from "./components/DefaultText";
 import { auth, db } from "../config/firebaseConfig";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
-import { TextInput } from "react-native-gesture-handler";
-import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons'; // 아이콘 사용을 위해 추가
+import { Feather } from '@expo/vector-icons';
 import SpouseStatusBar from './components/SpouseStatusBar';
+
 export default function CalendarPage() {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [diaryDates, setDiaryDates] = useState<string[]>([]);
   const [diarySnippets, setDiarySnippets] = useState<{ [date: string]: string }>({});
-  const [menuVisible, setMenuVisible] = useState(false); // 메뉴 표시 여부 상태 추가
-  const [pendingRequests, setPendingRequests] = useState(0); // 대기 중인 부부 요청 수
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState(0);
   const [isMonthChanging, setIsMonthChanging] = useState(false);
   const [animationDirection, setAnimationDirection] = useState('');
   const calendarAnimation = useRef(new Animated.Value(0)).current;
-  const [animationProgress, setAnimationProgress] = useState(0); // 드래그 진행 상태 추적
+  const [animationProgress, setAnimationProgress] = useState(0);
   const dragX = useRef(new Animated.Value(0)).current;
   const [nextMonth, setNextMonth] = useState<Date | null>(null);
   const [prevMonth, setPrevMonth] = useState<Date | null>(null);
   const [transitioning, setTransitioning] = useState(false);
   const { width } = Dimensions.get('window');
 
-  // 일주일치 다이어리 가져오기 버튼 핸들러
-  const handleWeeklyDiaryPress = () => {
-    router.push('/screens/WeeklyDiaryScreen' as any);
-  };
-  
-  // 바텀 시트 관련 상수 - 높이 단계 정의
+  // 바텀 시트 관련 상수
   const BOTTOM_SHEET_CLOSED = 0;
-  const BOTTOM_SHEET_PARTIAL = 300; // 40% 정도 올라오도록 높이 설정
+  const BOTTOM_SHEET_PARTIAL = 300;
 
   // 바텀 시트 관련 상태 및 애니메이션 값
   const [selectedDiaryContent, setSelectedDiaryContent] = useState<string>("");
   const [selectedDiaryDate, setSelectedDiaryDate] = useState<string>("");
   const [isTransitioning, setIsTransitioning] = useState(false);
   const bottomSheetHeight = useRef(new Animated.Value(0)).current;
+
+  // 일주일치 다이어리 가져오기 버튼 핸들러
+  const handleWeeklyDiaryPress = () => {
+    setMenuVisible(false);
+    router.push('/screens/WeeklyDiaryScreen' as any);
+  };
+
+  // 프로필 페이지 이동 핸들러
+  const handleProfilePage = () => {
+    setMenuVisible(false);
+    router.push('/profile' as any);
+  };
 
   // 요청 수 확인 함수
   const checkPendingRequests = async () => {
@@ -59,35 +66,27 @@ export default function CalendarPage() {
       console.error('요청 확인 오류:', error);
     }
   };
+
   const changeMonth = (direction: 'next' | 'prev') => {
     if (transitioning) return;
     setIsMonthChanging(true);
     
-    // 애니메이션 방향 설정
     setAnimationDirection(direction);
-    // 화면 너비 가져오기 (Dimensions에서 가져오는 것이 좋지만, 임시로 300 사용)
-    const screenWidth = 300;
-    // 하드코딩된 값 대신 실제 화면 너비 사용
     const { width } = Dimensions.get('window');
-    const targetValue = direction === 'next' ? -width : width;// 시작 위치 설정 (방향에 따라 화면 좌/우측에서 시작)
-        
+    const targetValue = direction === 'next' ? -width : width;
     
-    
-      // 애니메이션 실행
-      Animated.timing(dragX, {
-        toValue: targetValue,
-        duration: 300,
-        useNativeDriver: true,
-        easing: Easing.out(Easing.cubic),
-      }).start(() => {
-      // 애니메이션 완료 후 실제 월 변경
+    Animated.timing(dragX, {
+      toValue: targetValue,
+      duration: 300,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start(() => {
       setCurrentMonth(new Date(
         currentMonth.getFullYear(),
         currentMonth.getMonth() + (direction === 'next' ? 1 : -1),
         1
       ));
       
-      // 상태 초기화
       dragX.setValue(0);
       setTransitioning(false);
     });
@@ -103,6 +102,7 @@ export default function CalendarPage() {
       checkPendingRequests();
     }
   }, [menuVisible]);
+
   useEffect(() => {
     const next = new Date(currentMonth);
     next.setMonth(next.getMonth() + 1);
@@ -112,7 +112,8 @@ export default function CalendarPage() {
     prev.setMonth(prev.getMonth() - 1);
     setPrevMonth(prev);
   }, [currentMonth]);
-  // 바텀 시트 열기 - 부분적으로 열린 상태
+
+  // 바텀 시트 열기
   const openBottomSheet = () => {
     Animated.timing(bottomSheetHeight, {
       toValue: BOTTOM_SHEET_PARTIAL,
@@ -138,22 +139,14 @@ export default function CalendarPage() {
   // 다이어리 페이지로 직접 이동
   const directNavigate = () => {
     if (selectedDiaryDate) {
-      console.log("직접 페이지 이동 시도:", `/diary/${selectedDiaryDate}`);
-      
-      // 바텀 시트 닫기 (애니메이션 없이 즉시)
       bottomSheetHeight.setValue(0);
-      
-      // 상태 초기화
       setSelectedDiaryContent("");
       setSelectedDiaryDate("");
       
-      // 단순히 router.push만 사용
       try {
         router.push(`/diary/${selectedDiaryDate}` as any);
       } catch (error) {
         console.error("페이지 이동 오류:", error);
-        
-        // 페이지 이동이 실패하면 다시 시도
         setTimeout(() => {
           router.push(`/diary/${selectedDiaryDate}` as any);
         }, 100);
@@ -166,39 +159,16 @@ export default function CalendarPage() {
     setMenuVisible(!menuVisible);
   };
 
-  // 메뉴 항목 처리 함수들
+  // 다이어리 쓰기 핸들러
   const handleDiaryWrite = () => {
-    // 현재 날짜 포맷팅
     const today = new Date();
     const year = today.getFullYear();
     const month = today.getMonth() + 1;
     const day = today.getDate();
     const dateParam = `${year}-${month}-${day}`;
     
-    // 메뉴 닫기
     setMenuVisible(false);
-    
-    // 다이어리 작성 페이지로 이동
     router.push(`/diary/${dateParam}` as any);
-  };
-
-  const handleReportsPage = () => {
-    setMenuVisible(false);
-    router.push('/reports' as any);
-  };
-
-  const handleProfilePage = () => {
-    setMenuVisible(false);
-    // 회원 프로필 페이지 구현 예정
-    console.log("회원 프로필 페이지로 이동 (아직 구현되지 않음)");
-    // 미구현 기능 알림
-    alert("회원 프로필 기능은 아직 개발 중입니다.");
-  };
-
-  // 배우자 요청 확인 페이지로 이동
-  const handleSpouseRequestsPage = () => {
-    setMenuVisible(false);
-    router.push('/screens/spouse-requests' as any);
   };
 
   // 메뉴 닫기
@@ -218,20 +188,17 @@ export default function CalendarPage() {
       easing: Easing.out(Easing.cubic),
     }).start();
   }, [menuVisible]);
-  
 
   // 바텀 시트 PanResponder 설정
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // 수직 방향으로 충분히 드래그할 때만 PanResponder 활성화
         return Math.abs(gestureState.dy) > 10;
       },
       onPanResponderMove: (_, gestureState) => {
-        if (isTransitioning) return; // 전환 중에는 드래그 무시
+        if (isTransitioning) return;
         
-        // 현재 높이에서 드래그 거리만큼 조정
         let currentValue = 0;
         bottomSheetHeight.stopAnimation(value => {
           currentValue = value;
@@ -239,41 +206,29 @@ export default function CalendarPage() {
         
         let newHeight = currentValue - gestureState.dy;
         
-        // 높이 제한
         if (newHeight < 0) newHeight = 0;
         if (newHeight > BOTTOM_SHEET_PARTIAL * 1.5) newHeight = BOTTOM_SHEET_PARTIAL * 1.5;
         
         bottomSheetHeight.setValue(newHeight);
       },
       onPanResponderRelease: (_, gestureState) => {
-        // 전환 중에는 무시
         if (isTransitioning) return;
         
-        // 현재 높이 값 가져오기
         let currentValue = 0;
         bottomSheetHeight.stopAnimation(value => {
           currentValue = value;
         });
         
-        console.log("스와이프 감지 - dy:", gestureState.dy, "vy:", gestureState.vy, "current:", currentValue);
-        
-        // 위로 충분히 스와이프하면 다이어리 페이지로 이동
         if (gestureState.dy < -50 || gestureState.vy < -0.5 || currentValue > BOTTOM_SHEET_PARTIAL * 1.2) {
-          console.log("위로 스와이프: 다이어리 페이지로 이동");
-          
-          // 전환 중 상태로 설정하여 중복 호출 방지
           setIsTransitioning(true);
           
-          // 먼저 바텀 시트를 닫음
           Animated.timing(bottomSheetHeight, {
             toValue: 0,
             duration: 200,
             useNativeDriver: false,
           }).start(() => {
-            // 애니메이션 완료 후 페이지 이동
             directNavigate();
             
-            // 전환 완료
             setTimeout(() => {
               setIsTransitioning(false);
             }, 300);
@@ -282,12 +237,9 @@ export default function CalendarPage() {
           return;
         }
         
-        // 아래로 스와이프하면 닫기
         if (gestureState.dy > 50 || gestureState.vy > 0.3) {
-          console.log("아래로 스와이프: 닫기");
           closeBottomSheet();
         } else {
-          // 기본 상태로 유지
           openBottomSheet();
         }
       },
@@ -303,11 +255,9 @@ export default function CalendarPage() {
         const year = currentMonth.getFullYear();
         const month = currentMonth.getMonth();
         
-        // 현재 월의 첫날과 마지막날
         const startOfMonth = new Date(year, month, 1);
         const endOfMonth = new Date(year, month + 1, 0);
         
-        // YYYY-MM-DD 형식으로 변환
         const startDateStr = `${year}-${String(month + 1).padStart(2, "0")}-01`;
         const endDateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(endOfMonth.getDate()).padStart(2, "0")}`;
         
@@ -328,7 +278,6 @@ export default function CalendarPage() {
           if (data.date) {
             dates.push(data.date);
             
-            // 텍스트 내용의 첫 15자 정도를 스니펫으로 저장
             if (data.text) {
               const snippet = data.text.substring(0, 15) + (data.text.length > 15 ? "..." : "");
               snippets[data.date] = snippet;
@@ -347,7 +296,6 @@ export default function CalendarPage() {
   }, [currentMonth, auth.currentUser]);
 
   // 제스처 설정 - 좌우 스와이프로 월 변경
-  // 수정된 swipeGesture
   const swipeGesture = Gesture.Pan()
     .runOnJS(true)
     .onBegin(() => {
@@ -356,10 +304,8 @@ export default function CalendarPage() {
     })
     .onUpdate((event) => {
       if (transitioning) return;
-      // 드래그 저항 줄이기 (더 자연스러운 움직임)
       dragX.setValue(event.translationX);
       
-      // 드래그 방향에 따라 애니메이션 방향 설정
       if (Math.abs(event.translationX) > 15) {
         const direction = event.translationX > 0 ? 'prev' : 'next';
         setAnimationDirection(direction);
@@ -368,20 +314,15 @@ export default function CalendarPage() {
     .onEnd((event) => {
       if (transitioning) return;
       
-      // 화면 너비의 20%를 기준으로 전환 여부 결정
-      const threshold = 60; // 임시로 60px 사용, 실제로는 화면 너비의 20% 정도로 설정하는 것이 좋음
+      const threshold = 60;
       
       if (Math.abs(event.translationX) > threshold) {
-        // 충분히 스와이프한 경우
         if (event.translationX > 0) {
-          // 오른쪽으로 스와이프 - 이전 달
           changeMonth('prev');
         } else {
-          // 왼쪽으로 스와이프 - 다음 달
           changeMonth('next');
         }
       } else {
-        // 충분히 드래그하지 않았을 때 원래 위치로 복귀
         Animated.spring(dragX, {
           toValue: 0,
           useNativeDriver: true,
@@ -395,28 +336,23 @@ export default function CalendarPage() {
   const handleDatePress = async (date: Date) => {
     setSelectedDate(date);
     
-    // 클릭한 날짜를 YYYY-M-D 형식으로 변환
     const year = date.getFullYear();
-    const month = date.getMonth() + 1; // getMonth()는 0부터 시작하므로 1을 더함
+    const month = date.getMonth() + 1;
     const day = date.getDate();
     const dateParam = `${year}-${month}-${day}`;
     
-    // 해당 날짜의 다이어리 내용 가져오기
     if (auth.currentUser) {
       try {
-        // 패딩된 날짜 문자열 생성 (YYYY-MM-DD)
         const paddedDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
         const diaryRef = doc(db, "diaries", `${auth.currentUser.uid}_${paddedDate}`);
         const diarySnap = await getDoc(diaryRef);
         
         if (diarySnap.exists()) {
-          // 다이어리가 존재하면 내용 설정 및 바텀 시트 열기
           const data = diarySnap.data();
           setSelectedDiaryContent(data.text || "");
           setSelectedDiaryDate(dateParam);
           openBottomSheet();
         } else {
-          // 다이어리가 없으면 바로 작성 페이지로 이동
           router.push(`/diary/${dateParam}` as any);
         }
       } catch (error) {
@@ -424,25 +360,8 @@ export default function CalendarPage() {
         router.push(`/diary/${dateParam}` as any);
       }
     } else {
-      // 로그인하지 않은 경우 바로 작성 페이지로 이동
       router.push(`/diary/${dateParam}` as any);
     }
-  };
-
-  // 다이어리 쓰기 페이지로 이동 (현재 날짜)
-  const handleCurrentDiaryWrite = () => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = today.getMonth() + 1;
-    const day = today.getDate();
-    const dateParam = `${year}-${month}-${day}`;
-    
-    router.push(`/diary/${dateParam}` as any);
-  };
-
-  // 레포트 페이지로 이동 핸들러
-  const handleReportsPress = () => {
-    router.push('/reports' as any);
   };
 
   // 달력 렌더링 로직
@@ -450,20 +369,15 @@ export default function CalendarPage() {
     const year = monthDate.getFullYear();
     const month = monthDate.getMonth();
     
-    // 월의 첫 날과 마지막 날
     const firstDayOfMonth = new Date(year, month, 1);
     const lastDayOfMonth = new Date(year, month + 1, 0);
-    
-    // 첫 날의 요일 (0: 일요일, 1: 월요일, ...)
     const firstDayOfWeek = firstDayOfMonth.getDay();
     
-    // CalendarDay 타입 정의
     type CalendarDay = {
       date: Date;
       currentMonth: boolean;
     };
     
-    // 달력에 표시할 날짜 배열 생성
     const daysArray: CalendarDay[] = [];
     
     // 전월 날짜 채우기
@@ -484,8 +398,8 @@ export default function CalendarPage() {
       });
     }
     
-    // 다음 달 날짜 채우기 (6주가 되도록)
-    const remainingDays = 42 - daysArray.length; // 항상 6주(42일) 표시
+    // 다음 달 날짜 채우기
+    const remainingDays = 42 - daysArray.length;
     for (let i = 1; i <= remainingDays; i++) {
       const nextMonthDate = new Date(year, month + 1, i);
       daysArray.push({
@@ -494,7 +408,7 @@ export default function CalendarPage() {
       });
     }
     
-    // 7일씩 그룹화하여 주 단위로 표시
+    // 7일씩 그룹화
     const calendarWeeks: CalendarDay[][] = [];
     for (let i = 0; i < 6; i++) {
       calendarWeeks.push(daysArray.slice(i * 7, (i + 1) * 7));
@@ -549,7 +463,6 @@ export default function CalendarPage() {
                       {calendarDay.date.getDate()}
                     </DefaultText>
                     
-                    {/* 스니펫 표시만 하고 초록색 점은 제거 */}
                     {hasDiary && snippetText && (
                       <DefaultText style={styles.snippetText} numberOfLines={1}>
                         {snippetText}
@@ -568,8 +481,6 @@ export default function CalendarPage() {
   return (
     <GestureDetector gesture={swipeGesture}>
       <View style={styles.container}>
-      
-        {/* 상태바를 달력 헤더 위에 배치 */}
         <SpouseStatusBar />
         
         {/* 달력 헤더 */}
@@ -577,78 +488,71 @@ export default function CalendarPage() {
           <DefaultText style={styles.monthText}>
             {currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월
           </DefaultText>
+          <DefaultText style={styles.monthSubtitle}>
+            소중한 순간들을 기록해보세요
+          </DefaultText>
         </View>
         
-        {/* 달력 컨테이너 - 이 부분이 핵심 변경사항입니다 */}
-      <View style={styles.calendarContainer}>
-        {/* 이전 달 */}
-        <Animated.View
-          style={[
-            styles.calendarPage,
-            {
-              transform: [{
-                translateX: dragX.interpolate({
-                  inputRange: [-width, 0, width],
-                  outputRange: [-width*2, -width, 0],
-                  extrapolate: 'clamp',
-                })
-              }]
-            }
-          ]}
-        >
-          {prevMonth && renderCalendarForMonth(prevMonth)}
-        </Animated.View>
-        
-        {/* 현재 달 */}
-        <Animated.View
-          style={[
-            styles.calendarContent,
-            {
-              transform: [{
-                translateX: dragX
-              }]
-            }
-          ]}
-        >
-          {renderCalendarForMonth(currentMonth)}
-        </Animated.View>
-        
-        {/* 다음 달 */}
-        <Animated.View
-          style={[
-            styles.calendarPage,
-            {
-              transform: [{
-                translateX: dragX.interpolate({
-                  inputRange: [-width, 0, width],
-                  outputRange: [0, width, width*2],
-                  extrapolate: 'clamp',
-                })
-              }]
-            }
-          ]}
-        >
-          {nextMonth && renderCalendarForMonth(nextMonth)}
-        </Animated.View>
-      </View>
-        
-        {/* 하단 고정 버튼 영역 - 일주일치 다이어리 버튼만 표시
-        <View style={styles.buttonFixedContainer}>
-          <TouchableOpacity 
-            style={[styles.actionButton, {flex: 1}]}
-            onPress={handleWeeklyDiaryPress}
+        {/* 달력 컨테이너 */}
+        <View style={styles.calendarContainer}>
+          {/* 이전 달 */}
+          <Animated.View
+            style={[
+              styles.calendarPage,
+              {
+                transform: [{
+                  translateX: dragX.interpolate({
+                    inputRange: [-width, 0, width],
+                    outputRange: [-width*2, -width, 0],
+                    extrapolate: 'clamp',
+                  })
+                }]
+              }
+            ]}
           >
-            <DefaultText style={styles.buttonText}>일주일치 다이어리</DefaultText>
-          </TouchableOpacity>
-        </View> */}
+            {prevMonth && renderCalendarForMonth(prevMonth)}
+          </Animated.View>
+          
+          {/* 현재 달 */}
+          <Animated.View
+            style={[
+              styles.calendarContent,
+              {
+                transform: [{
+                  translateX: dragX
+                }]
+              }
+            ]}
+          >
+            {renderCalendarForMonth(currentMonth)}
+          </Animated.View>
+          
+          {/* 다음 달 */}
+          <Animated.View
+            style={[
+              styles.calendarPage,
+              {
+                transform: [{
+                  translateX: dragX.interpolate({
+                    inputRange: [-width, 0, width],
+                    outputRange: [0, width, width*2],
+                    extrapolate: 'clamp',
+                  })
+                }]
+              }
+            ]}
+          >
+            {nextMonth && renderCalendarForMonth(nextMonth)}
+          </Animated.View>
+        </View>
         
-        {/* 메뉴 버튼 - 우측 하단 고정 */}
+        {/* 메뉴 버튼 - 웜톤 적용 */}
         {!menuVisible && (
           <TouchableOpacity 
             style={styles.menuButton}
             onPress={toggleMenu}
           >
-            <Feather name="menu" size={24} color="#FFF" />
+            <Feather name="menu" size={24} color="#FFFFFF" />
             {pendingRequests > 0 && (
               <View style={styles.notificationBadge}>
                 <DefaultText style={styles.badgeText}>{pendingRequests}</DefaultText>
@@ -657,7 +561,7 @@ export default function CalendarPage() {
           </TouchableOpacity>
         )}
         
-        {/* 메뉴 버튼들 - 애니메이션으로 나타남 */}
+        {/* 정리된 메뉴 버튼들 - 3개만! */}
         {menuVisible && (
           <View style={styles.menuButtonsContainer}>
             {/* 반투명 오버레이 */}
@@ -667,75 +571,7 @@ export default function CalendarPage() {
               onPress={closeMenu}
             />
             
-            {/* 다이어리 쓰기 버튼 (최상단) */}
-            <Animated.View
-              style={[
-                styles.menuOptionButton,
-                {
-                  transform: [
-                    {
-                      translateY: menuButtonsAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, -400]
-                      })
-                    },
-                    {
-                      scale: menuButtonsAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.5, 1]
-                      })
-                    }
-                  ],
-                  opacity: menuButtonsAnimation
-                }
-              ]}
-            >
-              <View style={styles.menuItemRow}>
-                <DefaultText style={styles.menuButtonLabel}>다이어리 쓰기</DefaultText>
-                <TouchableOpacity
-                  style={styles.menuIconButton}
-                  onPress={handleDiaryWrite}
-                >
-                  <Feather name="edit-2" size={24} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-            </Animated.View>
-            {/* 주간 분석 리포트 버튼 */}
-            <Animated.View
-              style={[
-                styles.menuOptionButton,
-                {
-                  transform: [
-                    {
-                      translateY: menuButtonsAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, -320]  // 위치 조정 필요
-                      })
-                    },
-                    {
-                      scale: menuButtonsAnimation.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.5, 1]
-                      })
-                    }
-                  ],
-                  opacity: menuButtonsAnimation
-                }
-              ]}
-            >
-              <View style={styles.menuItemRow}>
-                <DefaultText style={styles.menuButtonLabel}>감정 진단 & 맞춤 솔루션</DefaultText>
-                <TouchableOpacity
-                  style={styles.menuIconButton}
-                  onPress={handleWeeklyDiaryPress}  // 기존 함수 재활용
-                >
-                  <Feather name="bar-chart-2" size={24} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-            </Animated.View>
-
-
-            {/* 내 레포트함 버튼 */}
+            {/* 1. 다이어리 쓰기 버튼 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -759,17 +595,17 @@ export default function CalendarPage() {
               ]}
             >
               <View style={styles.menuItemRow}>
-                <DefaultText style={styles.menuButtonLabel}>내 레포트함</DefaultText>
+                <DefaultText style={styles.menuButtonLabel}>오늘의 이야기 남기기</DefaultText>
                 <TouchableOpacity
-                  style={styles.menuIconButton}
-                  onPress={handleReportsPage}
+                  style={[styles.menuIconButton, { backgroundColor: '#C7A488' }]}
+                  onPress={handleDiaryWrite}
                 >
-                  <Feather name="file-text" size={24} color="#FFF" />
+                  <Feather name="edit-3" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
             </Animated.View>
-            
-            {/* 부부 요청 확인 버튼 */}
+
+            {/* 2. 감정 진단 & 맞춤 솔루션 버튼 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -793,29 +629,17 @@ export default function CalendarPage() {
               ]}
             >
               <View style={styles.menuItemRow}>
-                <DefaultText style={styles.menuButtonLabel}>
-                  부부 요청 확인
-                  {pendingRequests > 0 && (
-                    <View style={styles.menuBadge}>
-                      <DefaultText style={styles.menuBadgeText}> {pendingRequests}</DefaultText>
-                    </View>
-                  )}
-                </DefaultText>
+                <DefaultText style={styles.menuButtonLabel}>마음 돌아보기</DefaultText>
                 <TouchableOpacity
-                  style={styles.menuIconButton}
-                  onPress={handleSpouseRequestsPage}
+                  style={[styles.menuIconButton, { backgroundColor: '#B5896D' }]}
+                  onPress={handleWeeklyDiaryPress}
                 >
-                  <Feather name="users" size={24} color="#FFF" />
-                  {pendingRequests > 0 && (
-                    <View style={styles.iconBadge}>
-                      <DefaultText style={styles.iconBadgeText}>{pendingRequests}</DefaultText>
-                    </View>
-                  )}
+                  <Feather name="heart" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
             </Animated.View>
-            
-            {/* 회원 프로필 버튼 */}
+
+            {/* 3. 내 페이지 버튼 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -839,17 +663,29 @@ export default function CalendarPage() {
               ]}
             >
               <View style={styles.menuItemRow}>
-                <DefaultText style={styles.menuButtonLabel}>회원 프로필</DefaultText>
+                <DefaultText style={styles.menuButtonLabel}>
+                  나의 공간
+                  {pendingRequests > 0 && (
+                    <View style={styles.menuBadge}>
+                      <DefaultText style={styles.menuBadgeText}> {pendingRequests}</DefaultText>
+                    </View>
+                  )}
+                </DefaultText>
                 <TouchableOpacity
-                  style={styles.menuIconButton}
+                  style={[styles.menuIconButton, { backgroundColor: '#8A817C' }]}
                   onPress={handleProfilePage}
                 >
-                  <Feather name="user" size={24} color="#FFF" />
+                  <Feather name="user" size={22} color="#FFFFFF" />
+                  {pendingRequests > 0 && (
+                    <View style={styles.iconBadge}>
+                      <DefaultText style={styles.iconBadgeText}>{pendingRequests}</DefaultText>
+                    </View>
+                  )}
                 </TouchableOpacity>
               </View>
             </Animated.View>
             
-            {/* 돌아가기 버튼 (메뉴 버튼 자리) */}
+            {/* 4. 돌아가기 버튼 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -877,10 +713,10 @@ export default function CalendarPage() {
               <View style={styles.menuItemRow}>
                 <DefaultText style={styles.menuButtonLabel}>돌아가기</DefaultText>
                 <TouchableOpacity
-                  style={[styles.menuIconButton, {backgroundColor: '#333'}]}
+                  style={[styles.menuIconButton, { backgroundColor: '#F9F6F3', borderWidth: 1, borderColor: '#E7E1DB' }]}
                   onPress={closeMenu}
                 >
-                  <Feather name="arrow-left" size={24} color="#FFF" />
+                  <Feather name="arrow-left" size={22} color="#C7A488" />
                 </TouchableOpacity>
               </View>
             </Animated.View>
@@ -896,19 +732,19 @@ export default function CalendarPage() {
           {...panResponder.panHandlers}
         >
           <View style={styles.bottomSheetHandle} />
-          <ScrollView style={styles.bottomSheetContent} bounces={false}>
+          <ScrollView style={styles.bottomSheetContent} bounces={false} showsVerticalScrollIndicator={false}>
             <DefaultText style={styles.bottomSheetDate}>{selectedDiaryDate}</DefaultText>
             <DefaultText style={styles.bottomSheetText}>{selectedDiaryContent}</DefaultText>
             <DefaultText style={styles.bottomSheetHint}>
-              
+              위로 밀어서 자세히 보기
             </DefaultText>
             
-            {/* 작은 버튼으로 대체 */}
             <TouchableOpacity 
               style={styles.actionButton}
               onPress={directNavigate}
             >
-              <DefaultText style={styles.buttonText}>다이어리 작성</DefaultText>
+              <Feather name="edit-3" size={16} color="#C7A488" style={{ marginRight: 8 }} />
+              <DefaultText style={styles.buttonText}>이어서 쓰기</DefaultText>
             </TouchableOpacity>
           </ScrollView>
         </Animated.View>
@@ -920,17 +756,15 @@ export default function CalendarPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    backgroundColor: "#FFF",
+    padding: 24,
+    backgroundColor: "#FFFBF7", // 웜톤 배경
     position: 'relative',
   },
   calendarHeader: {
-    flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 32,
+    paddingTop: 20,
   },
-  // 스타일에 추가
   calendarContainer: {
     flex: 1,
     position: 'relative',
@@ -941,131 +775,119 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#fff',  // 배경색 추가
+    backgroundColor: '#FFFBF7',
     zIndex: 1,
   },
-  
   monthText: {
-    fontSize: 20,
-    fontWeight: "bold",
+    fontSize: 28,
+    fontWeight: "700",
     textAlign: 'center',
+    color: '#3B3029',
+    marginBottom: 8,
+    letterSpacing: -0.5,
+  },
+  monthSubtitle: {
+    fontSize: 15,
+    color: '#8A817C',
+    textAlign: 'center',
+    fontWeight: '400',
   },
   calendarContent: {
     flex: 1,
-    backgroundColor: '#fff',
-    overflow: 'hidden', // 애니메이션 중 내용이 넘치지 않도록
+    backgroundColor: '#FFFBF7',
+    overflow: 'hidden',
     zIndex: 2, 
   },
   weekHeader: {
     flexDirection: "row",
-    marginBottom: 15,
+    marginBottom: 20,
+    paddingHorizontal: 4,
   },
   weekDay: {
     flex: 1,
     alignItems: "center",
   },
   weekDayText: {
-    fontWeight: "bold",
+    fontWeight: "600",
+    color: '#3B3029',
+    fontSize: 15,
   },
   week: {
     flexDirection: "row",
-    marginBottom: 15,
-    height: 60, // 높이를 늘려 위아래 간격 확보
+    marginBottom: 8,
+    height: 68,
+    paddingHorizontal: 4,
   },
   day: {
     flex: 1,
-    height: 60, // 날짜 셀 높이 고정
+    height: 68,
     alignItems: "center",
-    borderRadius: 5,
-    padding: 2,
+    borderRadius: 12,
+    padding: 4,
+    marginHorizontal: 2,
   },
   dayContent: {
     width: '100%',
     height: '100%',
     alignItems: 'center',
-    paddingTop: 5, // 상단 패딩 추가
+    paddingTop: 8,
+    justifyContent: 'flex-start',
   },
   dayText: {
     fontSize: 16,
-    marginBottom: 4, // 숫자 아래 여백 추가
+    marginBottom: 4,
+    color: '#3B3029',
+    fontWeight: '500',
   },
   selectedDay: {
-    backgroundColor: "#E0E0E0",
+    backgroundColor: "#C7A488",
+    shadowColor: '#C7A488',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   otherMonthDay: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   otherMonthDayText: {
-    color: "#AAA",
+    color: "#8A817C",
   },
   sundayText: {
-    color: "#F00",
+    color: "#D2691E",
   },
   saturdayText: {
-    color: "#00F",
-  },
-  diaryIndicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#5DB075",
-    marginTop: 2,
-    marginBottom: 2,
+    color: "#5C3A2E",
   },
   snippetText: {
     fontSize: 9,
-    color: "#666",
+    color: '#B5896D',
     textAlign: 'center',
     width: '100%',
     position: 'absolute',
-    bottom: 0,
+    bottom: 6,
     left: 0,
     right: 0,
+    paddingHorizontal: 2,
+    fontWeight: '400',
   },
-  buttonFixedContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 15,
-    paddingHorizontal: 5,
-    borderTopWidth: 1,
-    borderTopColor: "#ECECEC",
-    backgroundColor: "#FFF",
-    marginTop: 10,
-    zIndex: 10,
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#000",
-    borderRadius: 10,
-    alignItems: "center",
-    marginHorizontal: 5,
-    marginTop: 10,
-    backgroundColor: "#FFF",
-  },
-  buttonText: {
-    fontSize: 14,
-    color: "#000",
-  },
-  // 메뉴 버튼 스타일
+  // 메뉴 버튼 스타일 - 웜톤 적용
   menuButton: {
     position: 'absolute',
-    right: 20,
-    bottom: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#333',
+    right: 24,
+    bottom: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#C7A488',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 5,
-    zIndex: 90, // 메뉴 오버레이보다 낮은 zIndex
-  },
-  menuButtonIcon: {
-    color: '#FFF',
-    fontSize: 24,
-    fontWeight: 'bold',
+    elevation: 8,
+    shadowColor: '#C7A488',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    zIndex: 90,
   },
   // 메뉴 버튼 컨테이너
   menuButtonsContainer: {
@@ -1083,162 +905,185 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(59, 48, 41, 0.4)',
     zIndex: 95,
   },
   // 개별 메뉴 옵션 버튼 컨테이너
   menuOptionButton: {
     position: 'absolute',
-    right: 20,
-    bottom: 20,
+    right: 24,
+    bottom: 32,
     zIndex: 110,
     width: '100%',
-    paddingRight: 0, // 오른쪽 여백 없앰
+    paddingRight: 0,
   },
-  // 메뉴 항목 행 (라벨과 버튼을 가로로 배열)
+  // 메뉴 항목 행
   menuItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
-  // 메뉴 닫기 버튼 (원래 메뉴 버튼 위치)
-  menuCloseButton: {
-    position: 'absolute',
-    right: 20,
-    bottom: 20,
-    zIndex: 110,
-    width: 56,
-    height: 56,
-  },
   // 메뉴 아이콘 버튼
   menuIconButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#555',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 5,
-    position: 'relative', // 배지 위치 지정을 위해 필요
+    elevation: 6,
+    shadowColor: '#3B3029',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    position: 'relative',
   },
-  // 메뉴 버튼 라벨
+  // 메뉴 버튼 라벨 - 웜톤 적용
   menuButtonLabel: {
-    color: 'white',
-    fontSize: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginRight: 10,
+    color: '#FFFFFF',
+    fontSize: 15,
+    backgroundColor: 'rgba(59, 48, 41, 0.85)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 16,
+    marginRight: 16,
     textAlign: 'right',
+    fontWeight: '500',
+    shadowColor: '#3B3029',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
   },
-  // 알림 배지 스타일 (메뉴 버튼 우상단에 표시)
+  // 알림 배지 스타일
   notificationBadge: {
     position: 'absolute',
-    top: -5,
-    right: -5,
-    backgroundColor: '#FF3B30',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    top: -4,
+    right: -4,
+    backgroundColor: '#D2691E',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 95,
-    paddingHorizontal: 4,
-    borderWidth: 1.5,
-    borderColor: '#FFF',
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: '#FFFBF7',
   },
   // 배지 내 텍스트
   badgeText: {
-    color: 'white',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: 'bold',
   },
   // 메뉴 라벨 내 배지
   menuBadge: {
-    backgroundColor: '#FF3B30',
-    borderRadius: 10,
-    minWidth: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 4,
-    paddingHorizontal: 3,
-  },
-  // 메뉴 라벨 배지 텍스트
-  menuBadgeText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  // 아이콘 내 배지 (회원 요청 아이콘 우상단)
-  iconBadge: {
-    position: 'absolute',
-    top: 2,
-    right: 2,
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#D2691E',
     borderRadius: 10,
     minWidth: 18,
     height: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 3,
-    borderWidth: 1,
-    borderColor: '#555',
+    marginLeft: 6,
+    paddingHorizontal: 4,
   },
-  // 아이콘 배지 텍스트
-  iconBadgeText: {
-    color: 'white',
+  // 메뉴 라벨 배지 텍스트
+  menuBadgeText: {
+    color: '#FFFFFF',
     fontSize: 10,
     fontWeight: 'bold',
   },
-  // 바텀 시트 스타일
+  // 아이콘 내 배지
+  iconBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#D2691E',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  // 아이콘 배지 텍스트
+  iconBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  // 바텀 시트 스타일 - 웜톤 적용
   bottomSheet: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'white',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    shadowColor: "#000",
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    shadowColor: "#3B3029",
     shadowOffset: {
       width: 0,
-      height: -3,
+      height: -4,
     },
-    shadowOpacity: 0.27,
-    shadowRadius: 4.65,
-    elevation: 6,
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
     zIndex: 100,
+    borderTopWidth: 1,
+    borderTopColor: '#F9F6F3',
   },
   bottomSheetHandle: {
-    width: 40,
-    height: 5,
-    backgroundColor: '#DDDDDD',
-    borderRadius: 3,
+    width: 48,
+    height: 4,
+    backgroundColor: '#E7E1DB',
+    borderRadius: 2,
     alignSelf: 'center',
-    marginTop: 10,
+    marginTop: 12,
   },
   bottomSheetContent: {
-    padding: 20,
-    paddingTop: 10,
+    padding: 24,
+    paddingTop: 16,
   },
   bottomSheetDate: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 16,
     textAlign: 'center',
+    color: '#3B3029',
   },
   bottomSheetText: {
     fontSize: 16,
     lineHeight: 24,
     marginBottom: 20,
+    color: '#3B3029',
+    fontWeight: '400',
   },
   bottomSheetHint: {
-    fontSize: 14,
-    color: '#888',
+    fontSize: 13,
+    color: '#8A817C',
     textAlign: 'center',
-    marginTop: 10,
-    marginBottom: 5,
-  }
+    marginTop: 8,
+    marginBottom: 16,
+    fontWeight: '400',
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#E7E1DB',
+    borderRadius: 12,
+    backgroundColor: '#F9F6F3',
+    marginTop: 8,
+  },
+  buttonText: {
+    fontSize: 15,
+    color: '#C7A488',
+    fontWeight: '500',
+  },
 });

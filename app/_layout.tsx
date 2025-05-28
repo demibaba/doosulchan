@@ -67,7 +67,15 @@ export default function Layout() {
             name="screens/WeeklyDiaryScreen"
             options={{ title: "최근 7일 다이어리", headerShown: false }}
           />       
-        </Stack>
+          <Stack.Screen
+            name="screens/spouse-requests"
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="reports/index"
+            options={{ headerShown: false }}
+          />
+          </Stack>
       </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );

@@ -1,9 +1,10 @@
-// app/spouse-registration.tsx
+// app/spouse-registration.tsx - 두 가지 옵션 추가
 import React, { useState, useEffect } from 'react';
-import { View, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
+import { View, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Share, TextInput } from 'react-native';
+import { doc, setDoc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebaseConfig';
 import { useRouter } from 'expo-router';
+import * as Crypto from 'expo-crypto';
 import DefaultText from 'app/components/DefaultText';
 import CustomAlert from './components/CustomAlert';
 
@@ -17,15 +18,19 @@ export enum SpouseStatus {
 }
 
 export default function SpouseRegistrationPage() {
-  const router = useRouter();
-  const [spouseEmail, setSpouseEmail] = useState('');
-  const [registrationSuccess, setRegistrationSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // **CustomAlert** 관련 상태 (title, message, 표시여부)
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [waitingForPartner, setWaitingForPartner] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertTitle, setAlertTitle] = useState('');
   const [alertMessage, setAlertMessage] = useState('');
+  
+  // 초대 코드 입력 관련 state
+  const [showInviteCodeInput, setShowInviteCodeInput] = useState(false);
+  const [inputInviteCode, setInputInviteCode] = useState('');
+  
+  const router = useRouter();
+  const currentUser = auth.currentUser;
 
   // CustomAlert를 띄우는 헬퍼 함수
   const showCustomAlert = (title: string, message: string) => {
@@ -34,112 +39,200 @@ export default function SpouseRegistrationPage() {
     setAlertVisible(true);
   };
 
-  // 배우자 등록 요청 핸들러
-  const handleRegisterSpouse = async () => {
-    if (!spouseEmail) {
-      // 표준 Alert 대신 CustomAlert를 쓰고 싶다면 아래처럼:
-      showCustomAlert('알림', '상대방 이메일을 입력해 주세요!');
+  // 초대 코드 생성 함수
+  const generateInviteCode = async () => {
+    const randomBytes = await Crypto.getRandomBytesAsync(6);
+    return Array.from(randomBytes, byte => 
+      byte.toString(36).toUpperCase()
+    ).join('').substring(0, 6);
+  };
+
+  // 초대 링크 생성 및 공유
+  const handleCreateInviteLink = async () => {
+    if (!currentUser) return;
+
+    try {
+      setLoading(true);
+      
+      // 1. 초대 코드 생성
+      const newInviteCode = await generateInviteCode();
+      
+      // 2. Firebase에 초대 정보 저장
+      await setDoc(doc(db, 'invitations', newInviteCode), {
+        inviterId: currentUser.uid,
+        inviterName: currentUser.displayName || '사랑하는 사람',
+        inviterEmail: currentUser.email,
+        createdAt: new Date(),
+        status: 'pending',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7일 후 만료
+      });
+      
+      // 3. 공유할 메시지 생성
+      const inviteMessage = `💕 우리 부부다이어리 시작해요!
+      
+${currentUser.displayName || '사랑하는 사람'}님이 당신을 초대했어요.
+함께 소중한 순간들을 기록해보세요 ✨
+
+👇 링크를 클릭해서 참여하기
+https://mydiary.app/invite/${newInviteCode}
+
+📱 앱이 없다면 설치페이지로 이동됩니다.
+
+🔐 또는 앱에서 초대코드 직접 입력: ${newInviteCode}`;
+
+      // 4. 카톡/문자로 공유
+      const shareResult = await Share.share({
+        message: inviteMessage,
+        title: '부부다이어리 초대 💝'
+      });
+
+      if (shareResult.action === Share.sharedAction) {
+        setInviteCode(newInviteCode);
+        setWaitingForPartner(true);
+        
+        // 상대방 응답 대기 시작
+        startListeningForPartnerResponse(newInviteCode);
+        
+        showCustomAlert(
+          "🎉 초대장을 보냈어요!",
+          `상대방이 링크를 클릭하거나 초대코드 "${newInviteCode}"를 입력하면 자동으로 연결됩니다.\n\n잠시만 기다려주세요 💕`
+        );
+      }
+      
+      setLoading(false);
+      
+    } catch (error) {
+      console.error('초대 링크 생성 오류:', error);
+      setLoading(false);
+      showCustomAlert(
+        "오류",
+        "초대 링크 생성에 실패했어요. 다시 시도해주세요."
+      );
+    }
+  };
+
+  // 초대 코드로 참여하기
+  const handleJoinWithCode = async () => {
+    if (!inputInviteCode.trim()) {
+      showCustomAlert('알림', '초대 코드를 입력해주세요.');
       return;
     }
 
-    const currentUser = auth.currentUser;
-    if (!currentUser || !currentUser.email) {
-      showCustomAlert('오류', '현재 로그인한 사용자 정보를 찾을 수 없습니다.');
+    if (!currentUser) {
+      showCustomAlert('오류', '로그인이 필요합니다.');
       return;
     }
 
     setLoading(true);
 
     try {
-      // 자신에게 요청을 보내는 것 방지
-      if (spouseEmail.toLowerCase() === currentUser.email.toLowerCase()) {
-        showCustomAlert('오류', '자신에게 부부 등록 요청을 보낼 수 없습니다.');
+      // 1. 초대 코드 확인
+      const inviteDoc = await getDoc(doc(db, 'invitations', inputInviteCode.toUpperCase()));
+      
+      if (!inviteDoc.exists()) {
+        showCustomAlert('오류', '유효하지 않은 초대 코드입니다.');
         setLoading(false);
         return;
       }
 
-      // Firestore에서 spouseEmail과 일치하는 사용자 검색
-      const q = query(collection(db, 'users'), where('email', '==', spouseEmail));
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        // 상대방이 아직 가입하지 않은 경우
-        await setDoc(
-          doc(db, 'users', currentUser.uid),
-          {
-            spouseEmail,
-            spouseStatus: SpouseStatus.UNREGISTERED,
-          },
-          { merge: true }
-        );
-
-        showCustomAlert(
-          '부부 등록 요청',
-          '상대방이 아직 가입하지 않았지만,\n 요청을 미리 기록했습니다.\n상대방이 가입 후 승인 절차를 진행해야 합니다.'
-        );
-        setRegistrationSuccess(true);
+      const inviteData = inviteDoc.data();
+      
+      // 2. 만료 확인
+      if (inviteData.expiresAt.toDate() < new Date()) {
+        showCustomAlert('오류', '만료된 초대 코드입니다.');
         setLoading(false);
         return;
       }
 
-      // 가입된 사용자인 경우
-      const spouseDoc = querySnapshot.docs[0];
-      const spouseUid = spouseDoc.id;
+      // 3. 이미 사용된 코드 확인
+      if (inviteData.status === 'accepted') {
+        showCustomAlert('오류', '이미 사용된 초대 코드입니다.');
+        setLoading(false);
+        return;
+      }
 
-      // spouseRequests 컬렉션에 요청 생성
-      const requestId = `${currentUser.uid}_${spouseUid}`;
-      await setDoc(doc(db, 'spouseRequests', requestId), {
-        requesterId: currentUser.uid,
-        recipientId: spouseUid,
-        requesterEmail: currentUser.email,
-        recipientEmail: spouseEmail,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
+      // 4. 자기 자신 초대 방지
+      if (inviteData.inviterId === currentUser.uid) {
+        showCustomAlert('오류', '자신이 보낸 초대는 수락할 수 없습니다.');
+        setLoading(false);
+        return;
+      }
+
+      // 5. 초대 수락 처리
+      await updateDoc(doc(db, 'invitations', inputInviteCode.toUpperCase()), {
+        status: 'accepted',
+        partnerId: currentUser.uid,
+        partnerName: currentUser.displayName || '사용자',
+        acceptedAt: new Date()
       });
 
-      // 내 정보 업데이트 (요청 보냄 상태)
-      await setDoc(
-        doc(db, 'users', currentUser.uid),
-        {
-          pendingSpouseId: spouseUid,
-          spouseStatus: SpouseStatus.REQUESTED,
-          spouseEmail,
-        },
-        { merge: true }
+      // 6. 양쪽 사용자 정보 업데이트
+      await setDoc(doc(db, 'users', currentUser.uid), {
+        spouseId: inviteData.inviterId,
+        spouseEmail: inviteData.inviterEmail,
+        spouseStatus: SpouseStatus.ACCEPTED,
+        updatedAt: new Date()
+      }, { merge: true });
+
+      await setDoc(doc(db, 'users', inviteData.inviterId), {
+        spouseId: currentUser.uid,
+        spouseEmail: currentUser.email,
+        spouseStatus: SpouseStatus.ACCEPTED,
+        updatedAt: new Date()
+      }, { merge: true });
+
+      showCustomAlert(
+        '🎉 연결 완료!',
+        `${inviteData.inviterName}님과 성공적으로 연결되었습니다!\n이제 함께 다이어리를 작성해보세요 💕`
       );
 
-      // 상대방 문서 업데이트 (요청 받음 상태)
-      await setDoc(
-        doc(db, 'users', spouseUid),
-        {
-          pendingSpouseId: currentUser.uid,
-          spouseStatus: SpouseStatus.PENDING,
-          spouseEmail: currentUser.email,
-        },
-        { merge: true }
-      );
+      setTimeout(() => {
+        router.replace('/calendar');
+      }, 3000);
 
-      // **여기서도 표준 Alert 대신 CustomAlert 사용**
-      showCustomAlert(
-        '부부 등록 요청 완료',
-        '상대방이 요청을 수락하면 부부 등록이 완료됩니다.'
-      );
-      setRegistrationSuccess(true);
-    } catch (error: any) {
-      console.error('부부 등록 전체 오류:', error);
-      // **에러 발생 시에도 CustomAlert 표시**
-      showCustomAlert(
-        '부부 초대 오류',
-        '상대방에게 초대 요청을 보내는 중 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.'
-      );
-    } finally {
+      setLoading(false);
+
+    } catch (error) {
+      console.error('초대 코드 처리 오류:', error);
+      showCustomAlert('오류', '초대 코드 처리 중 오류가 발생했습니다.');
       setLoading(false);
     }
   };
 
-  // 캘린더 페이지로 이동
-  const handleGoToCalendar = () => {
-    router.push('/calendar');
+  // 상대방 응답 대기
+  const startListeningForPartnerResponse = (code: string) => {
+    const unsubscribe = onSnapshot(doc(db, 'invitations', code), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        if (data.status === 'accepted' && data.partnerId) {
+          handlePartnerConnected(data.partnerId, data.partnerName);
+          unsubscribe();
+        }
+      }
+    });
+  };
+
+  // 파트너 연결 완료 처리
+  const handlePartnerConnected = async (partnerId: string, partnerName: string) => {
+    try {
+      await setDoc(doc(db, 'users', currentUser!.uid), {
+        spouseId: partnerId,
+        spouseStatus: SpouseStatus.ACCEPTED,
+        updatedAt: new Date()
+      }, { merge: true });
+
+      showCustomAlert(
+        "🎉 연결 완료!",
+        `${partnerName}님과 성공적으로 연결되었습니다!\n이제 함께 다이어리를 작성해보세요 💕`
+      );
+      
+      setTimeout(() => {
+        router.replace('/calendar');
+      }, 3000);
+      
+    } catch (error) {
+      console.error('파트너 연결 오류:', error);
+    }
   };
 
   // 건너뛰기
@@ -169,65 +262,128 @@ export default function SpouseRegistrationPage() {
   return (
     <View style={styles.container}>
       <View style={styles.contentContainer}>
-        <DefaultText style={styles.title}>부부 등록</DefaultText>
+        <DefaultText style={styles.title}>배우자와 함께 시작해요</DefaultText>
         
         <DefaultText style={styles.description}>
-          함께 사용할 상대방 이메일을 입력해주세요.{'\n'}
-          상대방이 초대를 승인하면 다이어리를 {'\n'}   
-          공유할 수 있습니다.
+          초대 링크를 보내서 간편하게 연결하세요{'\n'}
+          상대방이 링크를 클릭하면 자동으로{'\n'}
+          부부다이어리가 연결됩니다 ✨
         </DefaultText>
 
-        <TextInput
-          style={styles.input}
-          placeholder="상대방 이메일 주소 입력"
-          placeholderTextColor="#aaa"
-          value={spouseEmail}
-          onChangeText={setSpouseEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
+        {!waitingForPartner && !showInviteCodeInput && (
+          <>
+            {/* 초대 링크 생성 버튼 */}
+            <TouchableOpacity 
+              style={[styles.inviteButton, loading && styles.disabledButton]}
+              onPress={handleCreateInviteLink}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <DefaultText style={styles.inviteButtonText}>
+                    💝 배우자 초대하기
+                  </DefaultText>
+                  <DefaultText style={styles.inviteSubText}>
+                    카톡으로 초대 링크 보내기
+                  </DefaultText>
+                </>
+              )}
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.disabledButton]}
-          onPress={handleRegisterSpouse}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator size="small" color="#666" />
-          ) : (
-            <DefaultText style={styles.buttonText}>부부 초대하기</DefaultText>
-          )}
-        </TouchableOpacity>
+            {/* 구분선 */}
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <DefaultText style={styles.dividerText}>또는</DefaultText>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {/* 초대 코드 입력 버튼 */}
+            <TouchableOpacity 
+              style={styles.inviteCodeButton}
+              onPress={() => setShowInviteCodeInput(true)}
+            >
+              <DefaultText style={styles.inviteCodeButtonText}>
+                🔐 초대 코드로 참여하기
+              </DefaultText>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {showInviteCodeInput && (
+          // 초대 코드 입력 화면
+          <View style={styles.inviteCodeContainer}>
+            <DefaultText style={styles.inviteCodeTitle}>초대 코드 입력</DefaultText>
+            <DefaultText style={styles.inviteCodeDesc}>
+              상대방이 보낸 6자리 코드를 입력하세요
+            </DefaultText>
+            
+            <TextInput
+              style={styles.inviteCodeInput}
+              placeholder="예: ABC123"
+              placeholderTextColor="#666"
+              value={inputInviteCode}
+              onChangeText={setInputInviteCode}
+              autoCapitalize="characters"
+              maxLength={6}
+            />
+            
+            <TouchableOpacity
+              style={[styles.joinButton, loading && styles.disabledButton]}
+              onPress={handleJoinWithCode}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <DefaultText style={styles.joinButtonText}>
+                  💕 부부다이어리 참여하기
+                </DefaultText>
+              )}
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.backToOptionsButton}
+              onPress={() => setShowInviteCodeInput(false)}
+            >
+              <DefaultText style={styles.backToOptionsText}>← 다른 방법으로 연결하기</DefaultText>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {waitingForPartner && (
+          // 상대방 응답 대기 화면
+          <View style={styles.waitingContainer}>
+            <ActivityIndicator size="large" color="#FF6B6B" style={styles.waitingSpinner} />
+            <DefaultText style={styles.waitingText}>
+              상대방의 응답을 기다리고 있어요
+            </DefaultText>
+            <DefaultText style={styles.waitingSubText}>
+              초대 코드: {inviteCode}
+            </DefaultText>
+          </View>
+        )}
 
         <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
           <DefaultText style={styles.skipButtonText}>지금은 건너뛰기</DefaultText>
         </TouchableOpacity>
-
-        {/* {registrationSuccess && (
-          <TouchableOpacity style={styles.button} onPress={handleGoToCalendar}>
-            <DefaultText style={styles.buttonText}>캘린더로 이동</DefaultText>
-          </TouchableOpacity>
-        )} */}
       </View>
 
-      {/* CustomAlert */}
       <CustomAlert
         visible={alertVisible}
         title={alertTitle}
         message={alertMessage}
-        onClose={() => {
-          setAlertVisible(false);
-        }}
+        onClose={() => setAlertVisible(false)}
       />
     </View>
   );
 }
 
-// 스타일
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: '#000000',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -235,64 +391,163 @@ const styles = StyleSheet.create({
   contentContainer: {
     width: '100%',
     maxWidth: 400,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 24,
-    marginBottom: 20,
-    color: '#000',
+    fontSize: 28,
     fontWeight: 'bold',
+    color: '#FFFFFF',
     textAlign: 'center',
+    marginBottom: 15,
   },
   description: {
     fontSize: 16,
-    color: '#666',
+    color: '#CCCCCC',
     textAlign: 'center',
-    marginBottom: 30,
+    marginBottom: 50,
     lineHeight: 24,
   },
-  input: {
-    width: '100%',
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginBottom: 20,
-    borderRadius: 10,
-    color: '#000',
-    backgroundColor: '#f9f9f9',
-  },
-  button: {
-    width: '100%',
-    paddingVertical: 15,
-    borderWidth: 1,
-    borderColor: '#000',
-    borderRadius: 10,
+  inviteButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 20,
+    paddingHorizontal: 40,
+    borderRadius: 15,
     alignItems: 'center',
-    backgroundColor: '#FFF',
-    marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    marginBottom: 20,
+    shadowColor: '#FF6B6B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    minWidth: 280,
   },
-  disabledButton: {
-    borderColor: '#ccc',
-    backgroundColor: '#f5f5f5',
+  inviteButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 5,
   },
-  buttonText: {
-    color: '#000',
+  inviteSubText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    opacity: 0.9,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 30,
+    width: '100%',
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#333333',
+  },
+  dividerText: {
+    color: '#666666',
+    fontSize: 14,
+    paddingHorizontal: 15,
+  },
+  inviteCodeButton: {
+    borderWidth: 1,
+    borderColor: '#FF6B6B',
+    paddingVertical: 15,
+    paddingHorizontal: 40,
+    borderRadius: 15,
+    alignItems: 'center',
+    marginBottom: 30,
+    minWidth: 280,
+  },
+  inviteCodeButtonText: {
+    color: '#FF6B6B',
     fontSize: 16,
     fontWeight: '600',
   },
-  skipButton: {
+  inviteCodeContainer: {
     width: '100%',
-    paddingVertical: 15,
     alignItems: 'center',
-    marginTop: 10,
+  },
+  inviteCodeTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 10,
+  },
+  inviteCodeDesc: {
+    fontSize: 16,
+    color: '#CCCCCC',
+    textAlign: 'center',
+    marginBottom: 30,
+  },
+  inviteCodeInput: {
+    width: '100%',
+    maxWidth: 200,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: '#FF6B6B',
+    borderRadius: 15,
+    color: '#FFFFFF',
+    backgroundColor: '#111111',
+    fontSize: 18,
+    textAlign: 'center',
+    marginBottom: 30,
+  },
+  joinButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: 20,
+    paddingHorizontal: 40,
+    borderRadius: 15,
+    alignItems: 'center',
+    minWidth: 280,
+    marginBottom: 20,
+  },
+  joinButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  backToOptionsButton: {
+    paddingVertical: 10,
+  },
+  backToOptionsText: {
+    color: '#888888',
+    fontSize: 14,
+  },
+  waitingContainer: {
+    alignItems: 'center',
+    marginBottom: 30,
+    padding: 30,
+    backgroundColor: '#111111',
+    borderRadius: 15,
+    minWidth: 280,
+  },
+  waitingSpinner: {
+    marginBottom: 20,
+  },
+  waitingText: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  waitingSubText: {
+    fontSize: 14,
+    color: '#CCCCCC',
+    textAlign: 'center',
+  },
+  disabledButton: {
+    backgroundColor: '#666666',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  skipButton: {
+    paddingVertical: 15,
+    paddingHorizontal: 30,
   },
   skipButtonText: {
-    color: '#666',
-    fontSize: 14,
+    color: '#888888',
+    fontSize: 16,
+    textAlign: 'center',
     textDecorationLine: 'underline',
   },
 });

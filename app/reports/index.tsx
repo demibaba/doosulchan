@@ -1,4 +1,4 @@
-// app/reports/index.tsx (ReportsListScreen.tsx)
+// app/reports/index.tsx - 개인용 레포트도 지원하는 버전
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -11,9 +11,8 @@ import {
 import { useRouter } from "expo-router";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../../config/firebaseConfig";
-import DefaultText from "app/components/DefaultText";
+import DefaultText from "../components/DefaultText";
 import { Feather } from "@expo/vector-icons";
-import SpouseStatusBar from '../components/SpouseStatusBar';
 
 // 레포트 타입 정의
 interface Report {
@@ -30,14 +29,31 @@ export default function ReportsListScreen() {
   const router = useRouter();
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
-  // 현재 선택된 탭 (0: 내 레포트, 1: 배우자 레포트)
   const [activeTab, setActiveTab] = useState(0);
-  // 정렬 방식 (true: 최신순, false: 오래된순)
   const [sortNewest, setSortNewest] = useState(true);
+  const [hasSpouse, setHasSpouse] = useState(false); // 부부 등록 상태
 
   useEffect(() => {
     fetchReports();
   }, []);
+
+  // 내 레포트만 가져오는 함수
+  const getMyReportsOnly = async (userId: string) => {
+    console.log("내 레포트만 불러오기 시작...");
+    const reportsRef = collection(db, "reports");
+    const q = query(reportsRef, where("ownerId", "==", userId));
+    
+    const snapshot = await getDocs(q);
+    console.log("내 레포트 개수:", snapshot.size);
+    
+    const myReports = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      isOwn: true,
+    })) as Report[];
+    
+    return myReports;
+  };
 
   const fetchReports = async () => {
     try {
@@ -56,7 +72,10 @@ export default function ReportsListScreen() {
       const userDoc = await getDoc(userDocRef);
       
       if (!userDoc.exists()) {
-        console.log("사용자 프로필이 존재하지 않습니다.");
+        console.log("사용자 프로필이 존재하지 않습니다. 내 레포트만 표시합니다.");
+        const myReports = await getMyReportsOnly(userId);
+        setReports(myReports);
+        setHasSpouse(false);
         setLoading(false);
         return;
       }
@@ -64,35 +83,36 @@ export default function ReportsListScreen() {
       const userData = userDoc.data();
       console.log("사용자 데이터:", userData);
       
-      // spouseStatus가 "accepted"인지 확인
+      // 부부등록이 완료되지 않은 경우 - 내 레포트만 표시
       if (userData.spouseStatus !== "accepted") {
-        console.log("부부등록이 완료되지 않았습니다:", userData.spouseStatus);
-        setReports([]);
+        console.log("부부등록 미완료 - 내 레포트만 표시. 상태:", userData.spouseStatus);
+        const myReports = await getMyReportsOnly(userId);
+        setReports(myReports);
+        setHasSpouse(false);
         setLoading(false);
         return;
       }
       
-      // 배우자 ID 가져오기
+      // 부부등록 완료 - 내 레포트 + 배우자 레포트
+      setHasSpouse(true);
+      
       const spouseId = userData.spouseId;
       console.log("배우자 ID:", spouseId);
       
       if (!spouseId) {
-        console.log("배우자 ID가 없습니다.");
-        setReports([]);
+        console.log("배우자 ID가 없습니다. 내 레포트만 표시합니다.");
+        const myReports = await getMyReportsOnly(userId);
+        setReports(myReports);
+        setHasSpouse(false);
         setLoading(false);
         return;
       }
       
-      // 권한 테스트를 건너뛰고 바로 쿼리 실행
-      console.log("내 리포트 쿼리 시작...");
+      console.log("부부 레포트 모두 불러오기 시작...");
       const reportsRef = collection(db, "reports");
       
       // 자신이 소유한 리포트
-      const q1 = query(
-        reportsRef, 
-        where("ownerId", "==", userId)
-      );
-      
+      const q1 = query(reportsRef, where("ownerId", "==", userId));
       const snap1 = await getDocs(q1);
       console.log("내 리포트 쿼리 결과:", snap1.size);
       const fetched1 = snap1.docs.map((doc) => ({
@@ -101,13 +121,8 @@ export default function ReportsListScreen() {
         isOwn: true,
       })) as Report[];
       
-      // 배우자의 리포트 (배우자가 소유한 리포트)
-      console.log("배우자 리포트 쿼리 시작...");
-      const q2 = query(
-        reportsRef, 
-        where("ownerId", "==", spouseId)
-      );
-      
+      // 배우자의 리포트
+      const q2 = query(reportsRef, where("ownerId", "==", spouseId));
       const snap2 = await getDocs(q2);
       console.log("배우자 리포트 쿼리 결과:", snap2.size);
       const fetched2 = snap2.docs.map((doc) => ({
@@ -119,13 +134,20 @@ export default function ReportsListScreen() {
       const merged = [...fetched1, ...fetched2];
       console.log("병합된 전체 레포트 수:", merged.length);
       
-      if (merged.length === 0) {
-        console.log("불러온 레포트가 없습니다. 빈 배열을 설정합니다.");
-      }
-      
       setReports(merged);
     } catch (error) {
       console.error("레포트 불러오기 오류:", error);
+      // 오류 발생시에도 내 레포트만이라도 보여주기
+      try {
+        const user = auth.currentUser;
+        if (user) {
+          const myReports = await getMyReportsOnly(user.uid);
+          setReports(myReports);
+          setHasSpouse(false);
+        }
+      } catch (fallbackError) {
+        console.error("내 레포트 불러오기도 실패:", fallbackError);
+      }
     } finally {
       setLoading(false);
     }
@@ -155,15 +177,16 @@ export default function ReportsListScreen() {
 
   // 레포트 상세 페이지로 이동
   const navigateToReportDetail = (reportId: string) => {
-    // 수정된 라우팅 방식 - 올바른 경로 형식 사용
     router.push(`/reports/${reportId}`);
   };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#000" />
-        <DefaultText style={styles.loadingText}>레포트를 불러오는 중...</DefaultText>
+        <ActivityIndicator size="large" color="#B5896D" />
+        <DefaultText style={styles.loadingText}>
+          소중한 기록들을 불러오고 있어요...
+        </DefaultText>
       </View>
     );
   }
@@ -172,11 +195,14 @@ export default function ReportsListScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 상단에 SpouseStatusBar 추가 */}
-      <SpouseStatusBar />
-      
+      {/* 헤더 */}
       <View style={styles.headerContainer}>
-        <DefaultText style={styles.title}>레포트 목록</DefaultText>
+        <View style={styles.titleSection}>
+          <DefaultText style={styles.title}>🌙 감정 레포트</DefaultText>
+          <DefaultText style={styles.subtitle}>
+            {hasSpouse ? "우리의 소중한 감정 기록들" : "나의 소중한 감정 기록들"}
+          </DefaultText>
+        </View>
         
         <TouchableOpacity 
           style={styles.sortButton}
@@ -184,8 +210,8 @@ export default function ReportsListScreen() {
         >
           <Feather 
             name={sortNewest ? "arrow-down" : "arrow-up"} 
-            size={18} 
-            color="#000" 
+            size={16} 
+            color="#8A817C" 
           />
           <DefaultText style={styles.sortButtonText}>
             {sortNewest ? "최신순" : "오래된순"}
@@ -193,60 +219,78 @@ export default function ReportsListScreen() {
         </TouchableOpacity>
       </View>
       
-      {/* 탭 네비게이션 */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 0 && styles.activeTabButton
-          ]}
-          onPress={() => setActiveTab(0)}
-        >
-          <DefaultText
+      {/* 탭 네비게이션 - 부부 등록된 경우만 표시 */}
+      {hasSpouse && (
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
             style={[
-              styles.tabButtonText,
-              activeTab === 0 && styles.activeTabButtonText
+              styles.tabButton,
+              activeTab === 0 && styles.activeTabButton
             ]}
+            onPress={() => setActiveTab(0)}
           >
-            내 레포트
-          </DefaultText>
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[
-            styles.tabButton,
-            activeTab === 1 && styles.activeTabButton
-          ]}
-          onPress={() => setActiveTab(1)}
-        >
-          <DefaultText
+            <DefaultText
+              style={[
+                styles.tabButtonText,
+                activeTab === 0 && styles.activeTabButtonText
+              ]}
+            >
+              🤍 나의 기록
+            </DefaultText>
+          </TouchableOpacity>
+          
+          <TouchableOpacity
             style={[
-              styles.tabButtonText,
-              activeTab === 1 && styles.activeTabButtonText
+              styles.tabButton,
+              activeTab === 1 && styles.activeTabButton
             ]}
+            onPress={() => setActiveTab(1)}
           >
-            배우자 레포트
+            <DefaultText
+              style={[
+                styles.tabButtonText,
+                activeTab === 1 && styles.activeTabButtonText
+              ]}
+            >
+              💝 상대방의 기록
+            </DefaultText>
+          </TouchableOpacity>
+        </View>
+      )}
+      
+      {/* 부부 등록 안 된 경우 안내 메시지 */}
+      {!hasSpouse && (
+        <View style={styles.singleModeNotice}>
+          <DefaultText style={styles.singleModeText}>
+            💡 부부 등록 후 상대방의 레포트도 함께 볼 수 있어요
           </DefaultText>
-        </TouchableOpacity>
-      </View>
+        </View>
+      )}
       
       {filteredReports.length === 0 ? (
         <View style={styles.noDataContainer}>
-          <Feather name="file-text" size={48} color="#CCC" />
-          <DefaultText style={styles.noData}>
-            {activeTab === 0 
-              ? " 레포트가 없습니다."
-              : "배우자의 레포트가 없습니다."}
+          <DefaultText style={styles.noDataIcon}>📋</DefaultText>
+          <DefaultText style={styles.noDataTitle}>
+            {hasSpouse 
+              ? (activeTab === 0 ? "첫 번째 레포트를 기다리고 있어요" : "상대방의 레포트를 기다리고 있어요")
+              : "첫 번째 레포트를 기다리고 있어요"}
+          </DefaultText>
+          <DefaultText style={styles.noDataSubtitle}>
+            {hasSpouse 
+              ? (activeTab === 0 
+                  ? "일주일간 다이어리를 작성하면\n감정 분석 레포트가 생성돼요" 
+                  : "상대방이 레포트를 작성하면\n여기에서 볼 수 있어요")
+              : "일주일간 다이어리를 작성하면\n감정 분석 레포트가 생성돼요"}
           </DefaultText>
         </View>
       ) : (
-        <ScrollView style={styles.scrollContainer}>
+        <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
           {filteredReports.map((item, index) => (
             <TouchableOpacity
               key={index}
               style={[
                 styles.item,
-                { borderColor: item.isOwn ? "#3498db" : "#e74c3c" }
+                { borderColor: item.isOwn ? "#B5896D" : "#E7E1DB" }
               ]}
               onPress={() => navigateToReportDetail(item.id)}
             >
@@ -256,29 +300,23 @@ export default function ReportsListScreen() {
                 </DefaultText>
                 <View style={[
                   styles.badge,
-                  { backgroundColor: item.isOwn ? "#3498db" : "#e74c3c" }
+                  { backgroundColor: item.isOwn ? "#B5896D" : "#8A817C" }
                 ]}>
                   <DefaultText style={styles.badgeText}>
-                    {item.isOwn ? "내 레포트" : "배우자"}
+                    {item.isOwn ? "내 레포트" : "상대방"}
                   </DefaultText>
                 </View>
               </View>
               
-              {item.emotionScore !== undefined && (
-                <View style={styles.emotionContainer}>
-                  <DefaultText style={styles.emotionLabel}>감정 점수:</DefaultText>
-                  <DefaultText style={[
-                    styles.emotionScore,
-                    getEmotionScoreStyle(item.emotionScore)
-                  ]}>
-                    {item.emotionScore}
-                  </DefaultText>
-                </View>
-              )}
-              
               <DefaultText numberOfLines={2} style={styles.itemText}>
-                {item.reportText}
+                {item.reportText.substring(0, 100)}...
               </DefaultText>
+              
+              <View style={styles.itemFooter}>
+                <DefaultText style={styles.readMoreText}>
+                  자세히 보기 →
+                </DefaultText>
+              </View>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -287,7 +325,7 @@ export default function ReportsListScreen() {
   );
 }
 
-// 날짜 형식 변환 함수 (YYYY-MM-DD -> YYYY년 MM월 DD일)
+// 날짜 형식 변환 함수
 const formatDate = (dateString: string): string => {
   if (!dateString) return "날짜 없음";
   
@@ -303,149 +341,182 @@ const formatDate = (dateString: string): string => {
   }
 };
 
-// 감정 점수에 따른 스타일 결정
-const getEmotionScoreStyle = (score: number) => {
-  if (score >= 7) return styles.emotionHigh;
-  if (score >= 4) return styles.emotionMedium;
-  return styles.emotionLow;
-};
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    backgroundColor: "#FFF",
-  },
-  headerContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-    marginTop: 8, // SpouseStatusBar 때문에 약간의 상단 마진 추가
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#000",
-  },
-  sortButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: "#f0f0f0",
-  },
-  sortButtonText: {
-    fontSize: 12,
-    marginLeft: 4,
-    color: "#000",
-  },
-  tabContainer: {
-    flexDirection: "row",
-    marginBottom: 16,
-    borderRadius: 8,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#DDD",
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: "center",
-    backgroundColor: "#f5f5f5",
-  },
-  activeTabButton: {
-    backgroundColor: "#333",
-  },
-  tabButtonText: {
-    fontWeight: "bold",
-    color: "#666",
-  },
-  activeTabButtonText: {
-    color: "#FFF",
-  },
-  scrollContainer: {
-    flex: 1,
+    backgroundColor: "#FFFBF7",
+    padding: 24,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#FFFBF7",
   },
   loadingText: {
-    marginTop: 10,
-    color: "#666",
+    marginTop: 16,
+    fontSize: 16,
+    color: "#8A817C",
+    textAlign: "center",
+  },
+  headerContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 24,
+  },
+  titleSection: {
+    flex: 1,
+  },
+  title: {
+    fontSize: 28,
+    fontFamily: "GmarketSansTTFBold",
+    color: "#3B3029",
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: "#8A817C",
+    lineHeight: 22,
+  },
+  sortButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: "#F9F6F3",
+    borderWidth: 1,
+    borderColor: "#E7E1DB",
+  },
+  sortButtonText: {
+    fontSize: 14,
+    marginLeft: 6,
+    color: "#8A817C",
+    fontFamily: "GmarketSansTTFMedium",
+  },
+  singleModeNotice: {
+    backgroundColor: "#F9F6F3",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#E7E1DB",
+  },
+  singleModeText: {
+    fontSize: 14,
+    color: "#8A817C",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  tabContainer: {
+    flexDirection: "row",
+    marginBottom: 24,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#F9F6F3",
+    padding: 4,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderRadius: 12,
+  },
+  activeTabButton: {
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#3B3029",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  tabButtonText: {
+    fontSize: 16,
+    color: "#8A817C",
+    fontFamily: "GmarketSansTTFMedium",
+  },
+  activeTabButtonText: {
+    color: "#3B3029",
+    fontFamily: "GmarketSansTTFBold",
+  },
+  scrollContainer: {
+    flex: 1,
   },
   noDataContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingVertical: 60,
   },
-  noData: {
+  noDataIcon: {
+    fontSize: 64,
+    marginBottom: 24,
+  },
+  noDataTitle: {
+    fontSize: 20,
+    fontFamily: "GmarketSansTTFBold",
+    color: "#3B3029",
     textAlign: "center",
-    color: "#999",
-    marginTop: 12,
+    marginBottom: 12,
+  },
+  noDataSubtitle: {
     fontSize: 16,
+    color: "#8A817C",
+    textAlign: "center",
+    lineHeight: 24,
   },
   item: {
-    padding: 16,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 16,
     borderWidth: 1,
-    borderRadius: 12,
-    marginBottom: 12,
-    backgroundColor: "#FFF",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowColor: "#3B3029",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
   itemHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 16,
   },
   itemTitle: {
-    fontWeight: "bold",
-    fontSize: 16,
-    color: "#000",
+    fontSize: 18,
+    fontFamily: "GmarketSansTTFBold",
+    color: "#3B3029",
   },
   badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 12,
   },
   badgeText: {
-    color: "#FFF",
+    color: "#FFFFFF",
     fontSize: 12,
-    fontWeight: "bold",
-  },
-  emotionContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  emotionLabel: {
-    color: "#666",
-    fontSize: 14,
-    marginRight: 6,
-  },
-  emotionScore: {
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  emotionHigh: {
-    color: "#27ae60",
-  },
-  emotionMedium: {
-    color: "#f39c12",
-  },
-  emotionLow: {
-    color: "#e74c3c",
+    fontFamily: "GmarketSansTTFBold",
   },
   itemText: {
-    color: "#333",
+    fontSize: 15,
+    color: "#3B3029",
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  itemFooter: {
+    alignItems: "flex-end",
+  },
+  readMoreText: {
     fontSize: 14,
-    lineHeight: 20,
+    color: "#B5896D",
+    fontFamily: "GmarketSansTTFMedium",
   },
 });

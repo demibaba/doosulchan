@@ -40,7 +40,7 @@ const googleProvider = new GoogleAuthProvider();
 
 // ✅ Google OAuth 클라이언트 ID (Expo 사용 시 필요)
 export const GOOGLE_CLIENT_ID =
-  "232207972245-2pu2jbh2sobm09q0usrndkqg8okl56d8.apps.googleusercontent.com";
+  "232207972245-2pu2jbh2sobm09q0usrndkqg8okl56d8.apps.googleusercontent.com"; // Web Client ID로 복구
 
 // ✅ 내보내기
 export { app, auth, db, googleProvider, AsyncStorage };
