@@ -1,4 +1,4 @@
-// app/calendar.tsx - 고급 감성 웜톤 최종 버전
+// app/calendar.tsx - 감정 그라데이션 선 + 요일 + 개선된 모달 버전
 import React, { useState, useEffect, useRef } from "react";
 import { View, StyleSheet, TouchableOpacity, ScrollView, Animated, PanResponder, Easing, Dimensions, Alert } from "react-native";
 import { useRouter } from "expo-router";
@@ -9,12 +9,52 @@ import { GestureDetector, Gesture } from "react-native-gesture-handler";
 import { Feather } from '@expo/vector-icons';
 import SpouseStatusBar from './components/SpouseStatusBar';
 
+// 감정 색상 단순화 (웜톤 베이지와 조화로운 부드러운 색상)
+const EMOTION_STICKERS = [
+  // 긍정적 감정 (따뜻한 골드/베이지톤)
+  { id: 'love', emoji: '🥰', label: '사랑', color: '#D4AC0D', group: 'positive' },      // 따뜻한 골드
+  { id: 'happy', emoji: '😊', label: '행복', color: '#D4AC0D', group: 'positive' },    // 따뜻한 골드
+  { id: 'grateful', emoji: '🙏', label: '감사', color: '#D4AC0D', group: 'positive' }, // 따뜻한 골드
+  { id: 'calm', emoji: '😌', label: '평온', color: '#D4AC0D', group: 'positive' },     // 따뜻한 골드
+  
+  // 중립적 감정 (부드러운 오렌지/베이지톤)
+  { id: 'jealous', emoji: '😔', label: '질투', color: '#E67E22', group: 'neutral' },   // 부드러운 오렌지
+  { id: 'lonely', emoji: '💔', label: '외로움', color: '#E67E22', group: 'neutral' },  // 부드러운 오렌지
+  { id: 'sorry', emoji: '🙏', label: '미안함', color: '#E67E22', group: 'neutral' },   // 부드러운 오렌지
+  
+  // 부정적 감정 (차분한 브라운/로즈톤)
+  { id: 'anxious', emoji: '😰', label: '불안', color: '#A04000', group: 'negative' },  // 차분한 브라운
+  { id: 'sad', emoji: '😢', label: '슬픔', color: '#A04000', group: 'negative' },      // 차분한 브라운
+  { id: 'stressed', emoji: '😤', label: '스트레스', color: '#A04000', group: 'negative' }, // 차분한 브라운
+];
+
+// 요일 변환 함수
+function getKoreanDayOfWeek(dateStr: string): string {
+  const date = new Date(dateStr);
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  return days[date.getDay()];
+}
+
+// 날짜 포맷팅 함수 (표시용)
+function formatDisplayDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split("-");
+  const dayOfWeek = getKoreanDayOfWeek(dateStr);
+  return `${parseInt(month)}월 ${parseInt(day)}일 (${dayOfWeek})`;
+}
+
+interface DiaryData {
+  text: string;
+  emotionStickers?: string[];
+  date: string;
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [diaryDates, setDiaryDates] = useState<string[]>([]);
   const [diarySnippets, setDiarySnippets] = useState<{ [date: string]: string }>({});
+  const [diaryEmotions, setDiaryEmotions] = useState<{ [date: string]: string[] }>({});
   const [menuVisible, setMenuVisible] = useState(false);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [isMonthChanging, setIsMonthChanging] = useState(false);
@@ -29,13 +69,32 @@ export default function CalendarPage() {
 
   // 바텀 시트 관련 상수
   const BOTTOM_SHEET_CLOSED = 0;
-  const BOTTOM_SHEET_PARTIAL = 300;
+  const BOTTOM_SHEET_PARTIAL = 400; // 높이 증가
 
   // 바텀 시트 관련 상태 및 애니메이션 값
   const [selectedDiaryContent, setSelectedDiaryContent] = useState<string>("");
   const [selectedDiaryDate, setSelectedDiaryDate] = useState<string>("");
+  const [selectedDiaryEmotions, setSelectedDiaryEmotions] = useState<string[]>([]);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const bottomSheetHeight = useRef(new Animated.Value(0)).current;
+
+  // 감정 그라데이션 생성 함수
+  const getEmotionGradient = (emotions: string[]) => {
+    if (!emotions || emotions.length === 0) return null;
+    
+    const emotionColors = emotions.slice(0, 3).map(emotionId => {
+      const sticker = EMOTION_STICKERS.find(s => s.id === emotionId);
+      return sticker ? sticker.color : '#F0D5A8';
+    });
+    
+    if (emotionColors.length === 1) {
+      return emotionColors[0];
+    } else if (emotionColors.length === 2) {
+      return `linear-gradient(90deg, ${emotionColors[0]} 0%, ${emotionColors[1]} 100%)`;
+    } else {
+      return `linear-gradient(90deg, ${emotionColors[0]} 0%, ${emotionColors[1]} 50%, ${emotionColors[2]} 100%)`;
+    }
+  };
 
   // 일주일치 다이어리 가져오기 버튼 핸들러
   const handleWeeklyDiaryPress = () => {
@@ -133,6 +192,7 @@ export default function CalendarPage() {
     }).start(() => {
       setSelectedDiaryContent("");
       setSelectedDiaryDate("");
+      setSelectedDiaryEmotions([]);
     });
   };
 
@@ -142,6 +202,7 @@ export default function CalendarPage() {
       bottomSheetHeight.setValue(0);
       setSelectedDiaryContent("");
       setSelectedDiaryDate("");
+      setSelectedDiaryEmotions([]);
       
       try {
         router.push(`/diary/${selectedDiaryDate}` as any);
@@ -189,7 +250,7 @@ export default function CalendarPage() {
     }).start();
   }, [menuVisible]);
 
-  // 바텀 시트 PanResponder 설정
+  // 바텀 시트 PanResponder 설정 (개선됨)
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -207,7 +268,7 @@ export default function CalendarPage() {
         let newHeight = currentValue - gestureState.dy;
         
         if (newHeight < 0) newHeight = 0;
-        if (newHeight > BOTTOM_SHEET_PARTIAL * 1.5) newHeight = BOTTOM_SHEET_PARTIAL * 1.5;
+        if (newHeight > BOTTOM_SHEET_PARTIAL * 1.2) newHeight = BOTTOM_SHEET_PARTIAL * 1.2;
         
         bottomSheetHeight.setValue(newHeight);
       },
@@ -219,12 +280,13 @@ export default function CalendarPage() {
           currentValue = value;
         });
         
-        if (gestureState.dy < -50 || gestureState.vy < -0.5 || currentValue > BOTTOM_SHEET_PARTIAL * 1.2) {
+        // 위로 강하게 스와이프하면 전체 화면으로
+        if (gestureState.dy < -80 || gestureState.vy < -1) {
           setIsTransitioning(true);
           
           Animated.timing(bottomSheetHeight, {
             toValue: 0,
-            duration: 200,
+            duration: 250,
             useNativeDriver: false,
           }).start(() => {
             directNavigate();
@@ -237,7 +299,8 @@ export default function CalendarPage() {
           return;
         }
         
-        if (gestureState.dy > 50 || gestureState.vy > 0.3) {
+        // 아래로 스와이프하면 닫기
+        if (gestureState.dy > 80 || gestureState.vy > 0.5) {
           closeBottomSheet();
         } else {
           openBottomSheet();
@@ -246,7 +309,7 @@ export default function CalendarPage() {
     })
   ).current;
 
-  // 사용자의 다이어리 날짜 및 스니펫 로드
+  // 사용자의 다이어리 날짜, 스니펫, 감정 로드 (개선됨)
   useEffect(() => {
     const fetchDiaryData = async () => {
       if (!auth.currentUser) return;
@@ -272,6 +335,7 @@ export default function CalendarPage() {
         const querySnapshot = await getDocs(q);
         const dates: string[] = [];
         const snippets: { [date: string]: string } = {};
+        const emotions: { [date: string]: string[] } = {};
         
         querySnapshot.forEach((doc) => {
           const data = doc.data();
@@ -282,11 +346,17 @@ export default function CalendarPage() {
               const snippet = data.text.substring(0, 15) + (data.text.length > 15 ? "..." : "");
               snippets[data.date] = snippet;
             }
+            
+            // 감정 스티커 저장
+            if (data.emotionStickers && Array.isArray(data.emotionStickers)) {
+              emotions[data.date] = data.emotionStickers;
+            }
           }
         });
         
         setDiaryDates(dates);
         setDiarySnippets(snippets);
+        setDiaryEmotions(emotions);
       } catch (error) {
         console.error("다이어리 데이터 로드 오류:", error);
       }
@@ -332,7 +402,7 @@ export default function CalendarPage() {
       }
     });
 
-  // 날짜 클릭 핸들러
+  // 날짜 클릭 핸들러 (개선됨)
   const handleDatePress = async (date: Date) => {
     setSelectedDate(date);
     
@@ -351,6 +421,7 @@ export default function CalendarPage() {
           const data = diarySnap.data();
           setSelectedDiaryContent(data.text || "");
           setSelectedDiaryDate(dateParam);
+          setSelectedDiaryEmotions(data.emotionStickers || []);
           openBottomSheet();
         } else {
           router.push(`/diary/${dateParam}` as any);
@@ -364,7 +435,26 @@ export default function CalendarPage() {
     }
   };
 
-  // 달력 렌더링 로직
+  // 감정 스티커 렌더링 함수
+  const renderEmotionStickers = (emotions: string[]) => {
+    if (!emotions || emotions.length === 0) return null;
+
+    return (
+      <View style={styles.emotionPreview}>
+        {emotions.slice(0, 3).map(emotionId => {
+          const sticker = EMOTION_STICKERS.find(s => s.id === emotionId);
+          return sticker ? (
+            <View key={emotionId} style={[styles.emotionDot, { backgroundColor: sticker.color }]} />
+          ) : null;
+        })}
+        {emotions.length > 3 && (
+          <DefaultText style={styles.moreEmotions}>+{emotions.length - 3}</DefaultText>
+        )}
+      </View>
+    );
+  };
+
+  // 달력 렌더링 로직 (개선됨)
   const renderCalendarForMonth = (monthDate: Date) => {
     const year = monthDate.getFullYear();
     const month = monthDate.getMonth();
@@ -440,6 +530,7 @@ export default function CalendarPage() {
               const dateStr = `${calendarDay.date.getFullYear()}-${String(calendarDay.date.getMonth() + 1).padStart(2, "0")}-${String(calendarDay.date.getDate()).padStart(2, "0")}`;
               const hasDiary = diaryDates.includes(dateStr);
               const snippetText = diarySnippets[dateStr] || "";
+              const emotions = diaryEmotions[dateStr] || [];
               
               return (
                 <TouchableOpacity
@@ -462,6 +553,28 @@ export default function CalendarPage() {
                     >
                       {calendarDay.date.getDate()}
                     </DefaultText>
+                    
+                    {/* 감정 그라데이션 선 */}
+                    {hasDiary && emotions.length > 0 && (
+                      <View style={styles.emotionLineContainer}>
+                        <View style={styles.emotionLine}>
+                          {emotions.slice(0, 3).map((emotionId, index) => {
+                            const sticker = EMOTION_STICKERS.find(s => s.id === emotionId);
+                            return sticker ? (
+                              <View 
+                                key={emotionId}
+                                style={[
+                                  styles.emotionSegment,
+                                  { backgroundColor: sticker.color },
+                                  index === 0 && styles.firstSegment,
+                                  index === emotions.slice(0, 3).length - 1 && styles.lastSegment
+                                ]}
+                              />
+                            ) : null;
+                          })}
+                        </View>
+                      </View>
+                    )}
                     
                     {hasDiary && snippetText && (
                       <DefaultText style={styles.snippetText} numberOfLines={1}>
@@ -571,7 +684,7 @@ export default function CalendarPage() {
               onPress={closeMenu}
             />
             
-            {/* 1. 다이어리 쓰기 버튼 */}
+            {/* 1. 다이어리 쓰기 버튼 - 가장 연한 베이지 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -597,7 +710,7 @@ export default function CalendarPage() {
               <View style={styles.menuItemRow}>
                 <DefaultText style={styles.menuButtonLabel}>오늘의 이야기 남기기</DefaultText>
                 <TouchableOpacity
-                  style={[styles.menuIconButton, { backgroundColor: '#C7A488' }]}
+                  style={[styles.menuIconButton, { backgroundColor: '#E8D5B7' }]}
                   onPress={handleDiaryWrite}
                 >
                   <Feather name="edit-3" size={22} color="#FFFFFF" />
@@ -605,7 +718,7 @@ export default function CalendarPage() {
               </View>
             </Animated.View>
 
-            {/* 2. 감정 진단 & 맞춤 솔루션 버튼 */}
+            {/* 2. 감정 진단 & 맞춤 솔루션 버튼 - 중간 베이지 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -631,7 +744,7 @@ export default function CalendarPage() {
               <View style={styles.menuItemRow}>
                 <DefaultText style={styles.menuButtonLabel}>마음 돌아보기</DefaultText>
                 <TouchableOpacity
-                  style={[styles.menuIconButton, { backgroundColor: '#B5896D' }]}
+                  style={[styles.menuIconButton, { backgroundColor: '#C9B8A3' }]}
                   onPress={handleWeeklyDiaryPress}
                 >
                   <Feather name="heart" size={22} color="#FFFFFF" />
@@ -639,7 +752,7 @@ export default function CalendarPage() {
               </View>
             </Animated.View>
 
-            {/* 3. 내 페이지 버튼 */}
+            {/* 3. 내 페이지 버튼 - 진한 베이지 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -672,7 +785,7 @@ export default function CalendarPage() {
                   )}
                 </DefaultText>
                 <TouchableOpacity
-                  style={[styles.menuIconButton, { backgroundColor: '#8A817C' }]}
+                  style={[styles.menuIconButton, { backgroundColor: '#A08B6F' }]}
                   onPress={handleProfilePage}
                 >
                   <Feather name="user" size={22} color="#FFFFFF" />
@@ -685,7 +798,7 @@ export default function CalendarPage() {
               </View>
             </Animated.View>
             
-            {/* 4. 돌아가기 버튼 */}
+            {/* 4. 돌아가기 버튼 - 가장 연한 색상 */}
             <Animated.View
               style={[
                 styles.menuOptionButton,
@@ -723,7 +836,7 @@ export default function CalendarPage() {
           </View>
         )}
         
-        {/* 다이어리 미리보기 바텀 시트 */}
+        {/* 개선된 다이어리 미리보기 바텀 시트 */}
         <Animated.View 
           style={[
             styles.bottomSheet, 
@@ -733,18 +846,59 @@ export default function CalendarPage() {
         >
           <View style={styles.bottomSheetHandle} />
           <ScrollView style={styles.bottomSheetContent} bounces={false} showsVerticalScrollIndicator={false}>
-            <DefaultText style={styles.bottomSheetDate}>{selectedDiaryDate}</DefaultText>
-            <DefaultText style={styles.bottomSheetText}>{selectedDiaryContent}</DefaultText>
-            <DefaultText style={styles.bottomSheetHint}>
-              위로 밀어서 자세히 보기
+            <DefaultText style={styles.bottomSheetDate}>
+              {selectedDiaryDate && formatDisplayDate(selectedDiaryDate.replace(/(\d+)-(\d+)-(\d+)/, '$1-$2-$3'))}
             </DefaultText>
+            
+            {/* 감정 스티커 미리보기 */}
+            {selectedDiaryEmotions.length > 0 && (
+              <View style={styles.bottomSheetEmotions}>
+                <DefaultText style={styles.emotionsTitle}>오늘의 감정</DefaultText>
+                <View style={styles.emotionsContainer}>
+                  {selectedDiaryEmotions.slice(0, 5).map(emotionId => {
+                    const sticker = EMOTION_STICKERS.find(s => s.id === emotionId);
+                    
+                    // 각 색상에 맞는 최적의 텍스트 색상 결정
+                    const getTextColor = (backgroundColor: string) => {
+                      switch (backgroundColor) {
+                        case '#D4AC0D': // 따뜻한 골드 (긍정)
+                          return '#FFFFFF'; // 흰색
+                        case '#E67E22': // 부드러운 오렌지 (중립)
+                          return '#FFFFFF'; // 흰색
+                        case '#A04000': // 차분한 브라운 (부정)
+                          return '#FFFFFF'; // 흰색
+                        default:
+                          return '#5D4E37'; // 기본 다크 브라운
+                      }
+                    };
+                    
+                    return sticker ? (
+                      <View key={emotionId} style={[styles.emotionChip, { backgroundColor: sticker.color }]}>
+                        <DefaultText style={styles.emotionChipEmoji}>{sticker.emoji}</DefaultText>
+                        <DefaultText style={[
+                          styles.emotionChipLabel,
+                          { color: getTextColor(sticker.color) }
+                        ]}>
+                          {sticker.label}
+                        </DefaultText>
+                      </View>
+                    ) : null;
+                  })}
+                  {selectedDiaryEmotions.length > 5 && (
+                    <DefaultText style={styles.moreEmotionsText}>+{selectedDiaryEmotions.length - 5}개</DefaultText>
+                  )}
+                </View>
+              </View>
+            )}
+            
+            <DefaultText style={styles.bottomSheetText}>{selectedDiaryContent}</DefaultText>
             
             <TouchableOpacity 
               style={styles.actionButton}
               onPress={directNavigate}
             >
               <Feather name="edit-3" size={16} color="#C7A488" style={{ marginRight: 8 }} />
-              <DefaultText style={styles.buttonText}>이어서 쓰기</DefaultText>
+              <DefaultText style={styles.buttonText}>수정하기</DefaultText>
             </TouchableOpacity>
           </ScrollView>
         </Animated.View>
@@ -832,6 +986,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 8,
     justifyContent: 'flex-start',
+    position: 'relative',
   },
   dayText: {
     fontSize: 16,
@@ -859,8 +1014,59 @@ const styles = StyleSheet.create({
   saturdayText: {
     color: "#5C3A2E",
   },
+  
+  // 감정 그라데이션 선 스타일 (더 선명하게)
+  emotionLineContainer: {
+    position: 'absolute',
+    bottom: 18,
+    left: 6,
+    right: 6,
+    height: 4, // 3px → 4px로 더 두껍게
+  },
+  emotionLine: {
+    flexDirection: 'row',
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  emotionSegment: {
+    flex: 1,
+    height: 4,
+  },
+  firstSegment: {
+    borderTopLeftRadius: 2,
+    borderBottomLeftRadius: 2,
+  },
+  lastSegment: {
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
+  },
+  
+  // 감정 미리보기 (사용 안 함)
+  emotionPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  emotionDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    marginRight: 2,
+  },
+  moreEmotions: {
+    fontSize: 8,
+    color: '#8D7A65',
+    fontWeight: '600',
+  },
+  
   snippetText: {
-    fontSize: 9,
+    fontSize: 8,
     color: '#B5896D',
     textAlign: 'center',
     width: '100%',
@@ -871,6 +1077,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     fontWeight: '400',
   },
+  
   // 메뉴 버튼 스타일 - 웜톤 적용
   menuButton: {
     position: 'absolute',
@@ -889,6 +1096,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     zIndex: 90,
   },
+  
   // 메뉴 버튼 컨테이너
   menuButtonsContainer: {
     position: 'absolute',
@@ -898,6 +1106,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 100,
   },
+  
   // 메뉴 오버레이
   menuOverlay: {
     position: 'absolute',
@@ -908,6 +1117,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(59, 48, 41, 0.4)',
     zIndex: 95,
   },
+  
   // 개별 메뉴 옵션 버튼 컨테이너
   menuOptionButton: {
     position: 'absolute',
@@ -917,12 +1127,14 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingRight: 0,
   },
+  
   // 메뉴 항목 행
   menuItemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
+  
   // 메뉴 아이콘 버튼
   menuIconButton: {
     width: 60,
@@ -937,6 +1149,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     position: 'relative',
   },
+  
   // 메뉴 버튼 라벨 - 웜톤 적용
   menuButtonLabel: {
     color: '#FFFFFF',
@@ -955,6 +1168,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     overflow: 'hidden',
   },
+  
   // 알림 배지 스타일
   notificationBadge: {
     position: 'absolute',
@@ -971,12 +1185,14 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFBF7',
   },
+  
   // 배지 내 텍스트
   badgeText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: 'bold',
   },
+  
   // 메뉴 라벨 내 배지
   menuBadge: {
     backgroundColor: '#D2691E',
@@ -988,12 +1204,14 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     paddingHorizontal: 4,
   },
+  
   // 메뉴 라벨 배지 텍스트
   menuBadgeText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: 'bold',
   },
+  
   // 아이콘 내 배지
   iconBadge: {
     position: 'absolute',
@@ -1009,13 +1227,15 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
   },
+  
   // 아이콘 배지 텍스트
   iconBadgeText: {
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: 'bold',
   },
-  // 바텀 시트 스타일 - 웜톤 적용
+  
+  // 개선된 바텀 시트 스타일
   bottomSheet: {
     position: 'absolute',
     left: 0,
@@ -1055,19 +1275,52 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#3B3029',
   },
+  
+  // 바텀 시트 감정 섹션
+  bottomSheetEmotions: {
+    marginBottom: 20,
+  },
+  emotionsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#5D4E37',
+    marginBottom: 12,
+  },
+  emotionsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  emotionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+    marginBottom: 6,
+  },
+  emotionChipEmoji: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  emotionChipLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    // 동적 색상은 렌더링에서 처리
+  },
+  moreEmotionsText: {
+    fontSize: 12,
+    color: '#8D7A65',
+    fontWeight: '600',
+    alignSelf: 'center',
+  },
+  
   bottomSheetText: {
     fontSize: 16,
     lineHeight: 24,
-    marginBottom: 20,
+    marginBottom: 24, // 20 → 24로 증가 (힌트 제거로 여백 조정)
     color: '#3B3029',
-    fontWeight: '400',
-  },
-  bottomSheetHint: {
-    fontSize: 13,
-    color: '#8A817C',
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 16,
     fontWeight: '400',
   },
   actionButton: {

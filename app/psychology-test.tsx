@@ -1,4 +1,4 @@
-// app/psychology-test.tsx - 심리테스트 화면
+// app/psychology-test.tsx - 웜톤 베이지 업그레이드된 심리테스트 화면
 import React, { useState } from 'react';
 import { View, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -18,7 +18,6 @@ export default function PsychologyTest() {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState<TestAnswers>({});
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<PersonalityResult | null>(null);
 
   // 답변 선택 처리
   const handleAnswer = (answer: 'A' | 'B' | 'C' | 'D') => {
@@ -44,7 +43,6 @@ export default function PsychologyTest() {
     try {
       // 성향 분석
       const personalityResult = analyzePersonality(finalAnswers);
-      setResult(personalityResult);
 
       // Firebase에 결과 저장
       const user = auth.currentUser;
@@ -53,9 +51,14 @@ export default function PsychologyTest() {
           personalityType: personalityResult.type,
           personalityResult: personalityResult,
           testCompletedAt: new Date(),
-          testAnswers: finalAnswers
+          testAnswers: finalAnswers,
+          onboardingCompleted: true
         }, { merge: true });
       }
+
+      // ✅ 통합 결과페이지로 이동
+      router.replace('/onboarding-results');
+      
     } catch (error) {
       console.error('심리테스트 결과 저장 실패:', error);
     } finally {
@@ -72,73 +75,22 @@ export default function PsychologyTest() {
     }
   };
 
-  // 메인 화면으로 이동
-  const goToMain = () => {
-    router.replace('/calendar');
-  };
-
   // 로딩 화면
   if (isLoading) {
     return (
       <View style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF6B6B" />
-          <DefaultText style={styles.loadingText}>
-            당신의 성향을 분석하고 있어요...
-          </DefaultText>
-          <DefaultText style={styles.loadingSubText}>
-            잠시만 기다려주세요 ✨
-          </DefaultText>
-        </View>
-      </View>
-    );
-  }
-
-  // 결과 화면
-  if (result) {
-    return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.resultContainer}>
-        <View style={styles.resultHeader}>
-          <DefaultText style={styles.resultEmoji}>{result.emoji}</DefaultText>
-          <DefaultText style={styles.resultTitle}>{result.title}</DefaultText>
-          <DefaultText style={styles.resultDescription}>{result.description}</DefaultText>
-        </View>
-
-        <View style={styles.characteristicsSection}>
-          <DefaultText style={styles.sectionTitle}>✨ 당신의 특징</DefaultText>
-          {result.characteristics.map((characteristic, index) => (
-            <View key={index} style={styles.characteristicItem}>
-              <DefaultText style={styles.bullet}>•</DefaultText>
-              <DefaultText style={styles.characteristicText}>{characteristic}</DefaultText>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.recommendationsSection}>
-          <DefaultText style={styles.sectionTitle}>💡 추천 활동</DefaultText>
-          {result.recommendations.map((recommendation, index) => (
-            <View key={index} style={styles.recommendationItem}>
-              <DefaultText style={styles.bullet}>•</DefaultText>
-              <DefaultText style={styles.recommendationText}>{recommendation}</DefaultText>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.templatesSection}>
-          <DefaultText style={styles.sectionTitle}>📝 추천 템플릿</DefaultText>
-          <View style={styles.templateContainer}>
-            {result.templates.map((template, index) => (
-              <View key={index} style={styles.templateChip}>
-                <DefaultText style={styles.templateText}>{template}</DefaultText>
-              </View>
-            ))}
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#C9B8A3" />
+            <DefaultText style={styles.loadingText}>
+              당신의 성향을 분석하고 있어요...
+            </DefaultText>
+            <DefaultText style={styles.loadingSubText}>
+              결과 페이지로 이동 중 ✨
+            </DefaultText>
           </View>
         </View>
-
-        <TouchableOpacity style={styles.startButton} onPress={goToMain}>
-          <DefaultText style={styles.startButtonText}>🚀 다이어리 시작하기</DefaultText>
-        </TouchableOpacity>
-      </ScrollView>
+      </View>
     );
   }
 
@@ -150,23 +102,24 @@ export default function PsychologyTest() {
     <View style={styles.container}>
       {/* 헤더 */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-          <DefaultText style={styles.backButtonText}>←</DefaultText>
-        </TouchableOpacity>
-        <DefaultText style={styles.questionCounter}>
-          {currentQuestion + 1} / {PSYCHOLOGY_QUESTIONS.length}
+        <DefaultText style={styles.headerTitle}>성향 분석</DefaultText>
+        <DefaultText style={styles.headerSubtitle}>
+          나에게 맞는 다이어리 스타일을 찾아보세요
         </DefaultText>
       </View>
 
-      {/* 진행률 바 */}
+      {/* 진행률 */}
       <View style={styles.progressContainer}>
-        <View style={styles.progressBackground}>
+        <DefaultText style={styles.progressText}>
+          {currentQuestion + 1} / {PSYCHOLOGY_QUESTIONS.length}
+        </DefaultText>
+        <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${progress}%` }]} />
         </View>
       </View>
 
       {/* 질문 영역 */}
-      <View style={styles.questionContainer}>
+      <ScrollView style={styles.questionContainer} showsVerticalScrollIndicator={false}>
         <DefaultText style={styles.questionTitle}>{question.question}</DefaultText>
         
         <View style={styles.optionsContainer}>
@@ -185,7 +138,14 @@ export default function PsychologyTest() {
             </TouchableOpacity>
           ))}
         </View>
-      </View>
+
+        {/* 뒤로가기 버튼 */}
+        {currentQuestion > 0 && (
+          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+            <DefaultText style={styles.backButtonText}>← 이전 질문</DefaultText>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -193,209 +153,285 @@ export default function PsychologyTest() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: "#FFFBF7", // 웜톤 베이지 배경
   },
+  
+  // 헤더 스타일
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
+    padding: 24,
     paddingTop: 60,
-    paddingBottom: 20,
+    alignItems: "center",
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#1A1A1A',
-    justifyContent: 'center',
-    alignItems: 'center',
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#3B3029",
+    marginBottom: 8,
   },
-  backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  questionCounter: {
-    color: '#FFFFFF',
+  headerSubtitle: {
     fontSize: 16,
-    fontWeight: '600',
+    color: "#8A817C",
+    textAlign: "center",
   },
+  
+  // 진행률 스타일
   progressContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 30,
+    paddingHorizontal: 24,
+    marginBottom: 32,
   },
-  progressBackground: {
+  progressText: {
+    fontSize: 14,
+    color: "#8A817C",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  progressBar: {
     height: 4,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: "#E7E1DB",
     borderRadius: 2,
-    overflow: 'hidden',
   },
   progressFill: {
-    height: '100%',
-    backgroundColor: '#FF6B6B',
+    height: "100%",
+    backgroundColor: "#C9B8A3",
     borderRadius: 2,
   },
+  
+  // 질문 영역 스타일
   questionContainer: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   questionTitle: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 40,
-    lineHeight: 32,
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#3B3029",
+    textAlign: "center",
+    marginBottom: 32,
+    lineHeight: 28,
   },
   optionsContainer: {
     gap: 16,
+    paddingBottom: 40,
   },
   optionButton: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: '#2A2A2A',
+    borderColor: "#E7E1DB",
+    shadowColor: "#3B3029",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
   },
   optionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   optionLetter: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#FF6B6B',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#C9B8A3",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 16,
   },
   optionLetterText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   optionText: {
-    color: '#FFFFFF',
+    color: "#5C3A2E",
     fontSize: 16,
     flex: 1,
-    lineHeight: 22,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  loadingText: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginTop: 20,
-    textAlign: 'center',
-  },
-  loadingSubText: {
-    color: '#999999',
-    fontSize: 16,
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  resultContainer: {
-    padding: 20,
-  },
-  resultHeader: {
-    alignItems: 'center',
-    marginBottom: 40,
-  },
-  resultEmoji: {
-    fontSize: 80,
-    marginBottom: 16,
-  },
-  resultTitle: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    textAlign: 'center',
-  },
-  resultDescription: {
-    color: '#CCCCCC',
-    fontSize: 16,
-    textAlign: 'center',
     lineHeight: 24,
   },
-  characteristicsSection: {
+  
+  // 뒤로가기 버튼
+  backButton: {
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginTop: 20,
+  },
+  backButtonText: {
+    color: "#8A817C",
+    fontSize: 16,
+    textDecorationLine: "underline",
+  },
+  
+  // 로딩 화면 스타일
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 40,
+  },
+  loadingCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 40,
+    alignItems: "center",
+    shadowColor: "#3B3029",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  loadingText: {
+    color: "#3B3029",
+    fontSize: 20,
+    fontWeight: "bold",
+    marginTop: 20,
+    textAlign: "center",
+  },
+  loadingSubText: {
+    color: "#8A817C",
+    fontSize: 16,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  
+  // 결과 화면 스타일
+  resultContainer: {
+    padding: 24,
+    paddingTop: 60,
+  },
+  resultCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    shadowColor: "#3B3029",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  resultHeader: {
+    alignItems: "center",
     marginBottom: 32,
+  },
+  emojiContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: "#F9F6F3",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#E7E1DB",
+  },
+  resultEmoji: {
+    fontSize: 60,
+  },
+  resultTitle: {
+    color: "#3B3029",
+    fontSize: 28,
+    fontWeight: "bold",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  resultDescription: {
+    color: "#5C3A2E",
+    fontSize: 16,
+    textAlign: "center",
+    lineHeight: 24,
+  },
+  
+  // 섹션 스타일
+  characteristicsSection: {
+    marginBottom: 24,
   },
   recommendationsSection: {
-    marginBottom: 32,
+    marginBottom: 24,
   },
   templatesSection: {
-    marginBottom: 40,
+    marginBottom: 32,
   },
   sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: "#3B3029",
+    fontSize: 18,
+    fontWeight: "bold",
     marginBottom: 16,
   },
+  sectionCard: {
+    backgroundColor: "#F9F6F3",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E7E1DB",
+  },
   characteristicItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     marginBottom: 12,
   },
   recommendationItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     marginBottom: 12,
   },
+  bulletContainer: {
+    width: 20,
+    alignItems: "center",
+  },
   bullet: {
-    color: '#FF6B6B',
+    color: "#C9B8A3",
     fontSize: 16,
-    marginRight: 12,
-    marginTop: 2,
+    fontWeight: "bold",
   },
   characteristicText: {
-    color: '#CCCCCC',
+    color: "#5C3A2E",
     fontSize: 16,
     flex: 1,
     lineHeight: 22,
   },
   recommendationText: {
-    color: '#CCCCCC',
+    color: "#5C3A2E",
     fontSize: 16,
     flex: 1,
     lineHeight: 22,
   },
+  
+  // 템플릿 스타일
   templateContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   },
   templateChip: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: "#F9F6F3",
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#FF6B6B',
+    borderColor: "#C9B8A3",
   },
   templateText: {
-    color: '#FF6B6B',
+    color: "#C9B8A3",
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
+  
+  // 시작 버튼
   startButton: {
-    backgroundColor: '#FF6B6B',
+    backgroundColor: "#C9B8A3",
     paddingVertical: 16,
     borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 20,
+    alignItems: "center",
+    shadowColor: "#8A817C",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   startButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
 });

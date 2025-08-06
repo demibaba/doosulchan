@@ -1,57 +1,120 @@
-// utils/openaiApi.ts - 감정 점수 포함 개선 버전
+// utils/openaiApi.ts - 애착유형 맞춤형 레포트 시스템
 import { OPENAI_API_KEY } from "../config/openaiConfig";
+import { auth, db } from "../config/firebaseConfig";
+import { doc, getDoc } from "firebase/firestore";
 
 // GPT-3.5 Turbo 엔드포인트
 const OPENAI_COMPLETION_URL = "https://api.openai.com/v1/chat/completions";
 
-// 마크다운 제거 함수 (보완)
+// 마크다운 제거 함수
 function removeMarkdown(text: string): string {
-  // 별표로 둘러싸인 텍스트에서 별표 제거 (굵은 텍스트와 이탤릭)
-  text = text.replace(/\*\*(.*?)\*\*/g, '$1');  // 굵은 텍스트 (**텍스트**)
-  text = text.replace(/\*(.*?)\*/g, '$1');      // 이탤릭 (*텍스트*)
-  
-  // 다른 마크다운 서식 제거
-  text = text.replace(/__(.*?)__/g, '$1');      // 밑줄 (__텍스트__)
-  text = text.replace(/_(.*?)_/g, '$1');        // 이탤릭 (_텍스트_)
-  text = text.replace(/#{1,6}\s?(.*)/g, '$1');  // 헤딩 (# 제거)
+  text = text.replace(/\*\*(.*?)\*\*/g, '$1');  // 굵은 텍스트
+  text = text.replace(/\*(.*?)\*/g, '$1');      // 이탤릭
+  text = text.replace(/__(.*?)__/g, '$1');      // 밑줄
+  text = text.replace(/_(.*?)_/g, '$1');        // 이탤릭
+  text = text.replace(/#{1,6}\s?(.*)/g, '$1');  // 헤딩
   text = text.replace(/`{1,3}(.*?)`{1,3}/g, '$1'); // 코드 블록
-  text = text.replace(/^\s*-\s+/gm, '• ');      // 리스트 (-를 •로)
-  text = text.replace(/^\s*\*\s+/gm, '• ');     // 리스트 (*를 •로)
-  
+  text = text.replace(/^\s*-\s+/gm, '• ');      // 리스트
+  text = text.replace(/^\s*\*\s+/gm, '• ');     // 리스트
   return text;
 }
 
-// 토큰 최적화된 간단 프롬프트 (기존 800토큰 → 약 150토큰!)
-const systemPrompt = `
-당신은 관계 상담 전문가입니다. 일주일 일기를 분석해 간단한 레포트를 작성하세요.
+// 사용자의 애착유형 가져오기
+const getUserAttachmentType = async () => {
+  try {
+    const user = auth.currentUser;
+    if (user) {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      const userData = userDoc.data();
+      return userData?.attachmentType || 'secure';
+    }
+  } catch (error) {
+    console.error("애착유형 조회 실패:", error);
+  }
+  return 'secure';
+};
 
-출력 형식:
-1. 일기 요약 (핵심 2-3문장)
+// 애착유형별 맞춤 프롬프트 생성
+const createAttachmentAwarePrompt = (attachmentType: string) => {
+  const typeInfo = {
+    secure: {
+      name: '안정형',
+      characteristics: '관계에서 안정감을 느끼고 균형 잡힌 감정 표현',
+      patterns: '일관된 감정 상태, 갈등 시 건설적 해결',
+      advice: '현재의 안정성 유지하며 상대방 지지'
+    },
+    anxious: {
+      name: '불안형',
+      characteristics: '상대방의 반응에 민감하고 확인 욕구가 강함',
+      patterns: '감정 기복, 과도한 걱정, 즉시 반응 경향',
+      advice: '10분 기다리기, 자기 진정 연습'
+    },
+    avoidant: {
+      name: '회피형',
+      characteristics: '독립성을 중시하고 감정 표현을 어려워함',
+      patterns: '감정 억제, 거리두기, 혼자만의 시간 선호',
+      advice: '작은 감정부터 표현 연습, 점진적 친밀감 늘리기'
+    },
+    disorganized: {
+      name: '혼란형',
+      characteristics: '일관되지 않은 애착 행동과 감정 변화',
+      patterns: '예측 불가한 감정 반응, 접근-회피 반복',
+      advice: '감정 패턴 인식, 안정적 루틴 만들기'
+    }
+  };
 
-2. 감정 분석
-◆ 주요 감정: (3개 키워드)
-◆ 감정 변화: (간단히 2-3문장)
-◆ 심리 상태: (현재 상태 2-3문장)
+  const info = typeInfo[attachmentType as keyof typeof typeInfo] || typeInfo.secure;
 
-3. 관계 조언
-◆ 상대방 권장 행동: (구체적 1개)
-◆ 본인 개선점: (구체적 1개) 
-◆ 실천 조언: 
-1) (간단한 조언 1)
-2) (간단한 조언 2)
+  return `
+당신은 커플 심리학과 애착이론 전문가입니다. 
+사용자의 애착유형은 ${info.name}입니다.
 
-마지막에 감정점수 JSON 필수:
+${info.name}의 특성: ${info.characteristics}
+전형적 패턴: ${info.patterns}
+
+${info.name}의 관점에서 일주일 일기를 분석해 맞춤형 레포트를 작성하세요.
+
+형식:
+1. 요약
+${info.name}인 당신의 이번 주는... (애착 특성을 고려한 분석 2-3문장)
+
+2. ${info.name} 관점에서의 감정분석
+- 주요감정: (3개)
+- 애착 패턴: ${info.name}의 전형적 특성이 어떻게 나타났는지 분석
+- 감정 변화: 애착유형 관점에서의 해석 (2-3문장)
+- 현재 상태: ${info.name}의 관계 욕구 충족도 평가
+
+3. ${info.name}를 위한 맞춤 조언
+- 상대방 권장 행동: ${info.name}에게 도움이 되는 구체적 행동
+- 본인 개선점: ${info.name} 특성을 고려한 성장 방향
+- ${info.name} 맞춤 실천법: 
+  1) ${info.advice}와 관련된 구체적 방법
+  2) 애착 안정성 향상을 위한 실천법
+
+4. 다음 주 ${info.name} 관계 미션
+- ${info.name} 특성에 맞는 관계 개선 과제 3가지
+
+반드시 마지막에 완전한 7일 JSON:
 [EMOTION_SCORES]
-{"emotionScores":[{"day":"월요일","happiness":7.5,"anxiety":3.2,"sadness":2.1,"anger":1.5,"love":8.0,"overall":7.2},...]}
+{"emotionScores":[{"day":"월요일","happiness":7.5,"anxiety":3.2,"sadness":2.1,"anger":1.5,"love":8.0,"overall":7.2},{"day":"화요일","happiness":8.0,"anxiety":2.0,"sadness":1.8,"anger":1.0,"love":8.5,"overall":7.9},{"day":"수요일","happiness":7.8,"anxiety":3.5,"sadness":3.0,"anger":2.0,"love":7.0,"overall":6.8},{"day":"목요일","happiness":6.5,"anxiety":4.0,"sadness":4.5,"anger":3.2,"love":5.0,"overall":4.8},{"day":"금요일","happiness":5.0,"anxiety":6.0,"sadness":6.5,"anger":4.0,"love":3.0,"overall":4.9},{"day":"토요일","happiness":4.5,"anxiety":7.0,"sadness":7.8,"anger":5.0,"love":2.5,"overall":5.6},{"day":"일요일","happiness":3.5,"anxiety":7.8,"sadness":8.4,"anger":6.2,"love":2.0,"overall":4.9}]}
 [/EMOTION_SCORES]
 
-주의: 마크다운(*,#,_) 사용금지, 간결하게 작성
-`;
+${info.name}의 특성을 충분히 활용해 전문적이고 개인화된 분석을 제공하세요.`;
+};
 
-// 함수: 사용자 프롬프트(실제 다이어리 텍스트)를 받아 GPT의 응답을 반환
+// 메인 레포트 생성 함수
 export async function generateOpenAIReport(userDiaryText: string): Promise<string> {
   try {
     console.log("OpenAI API 호출 시작...");
+    
+    // 사용자의 애착유형 가져오기
+    const attachmentType = await getUserAttachmentType();
+    const systemPrompt = createAttachmentAwarePrompt(attachmentType);
+    
+    console.log("사용자 애착유형:", attachmentType);
+    
+    // 입력 텍스트 최적화
+    const trimmedInput = userDiaryText.slice(0, 600);
     
     const response = await fetch(OPENAI_COMPLETION_URL, {
       method: "POST",
@@ -62,29 +125,27 @@ export async function generateOpenAIReport(userDiaryText: string): Promise<strin
       body: JSON.stringify({
         model: "gpt-3.5-turbo",
         messages: [
-          // 시스템 메시지: 프롬프트 지시사항
           {
             role: "system",
             content: systemPrompt,
           },
-          // 유저 메시지: 간단하게 요청
           {
             role: "user",
-            content: `일주일 일기 분석해주세요:\n\n${userDiaryText}`,
+            content: `일주일 일기 분석:\n\n${trimmedInput}`,
           },
         ],
-        max_tokens: 1000, // 2000 → 1000으로 축소 (출력 토큰도 절약)
-        temperature: 0.7,
-        top_p: 1.0,
-        frequency_penalty: 0.3, // 중복 표현 줄이기
-        presence_penalty: 0.3,
+        max_tokens: 1800,
+        temperature: 0.2,
+        top_p: 0.9,
+        frequency_penalty: 0.6,
+        presence_penalty: 0.4,
       }),
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("OpenAI API 오류 상세:", errorData);
-      throw new Error(`OpenAI API 호출 실패: ${response.status} ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      console.error("OpenAI API 오류:", errorData);
+      throw new Error(`OpenAI API 호출 실패: ${response.status}`);
     }
 
     const data = await response.json();
@@ -92,132 +153,72 @@ export async function generateOpenAIReport(userDiaryText: string): Promise<strin
     
     console.log("OpenAI 원본 응답:", aiText);
     
-    // 마크다운 제거 함수를 적용
+    // JSON 완성도 검증 및 복구
+    const hasStartTag = aiText.includes('[EMOTION_SCORES]');
+    const hasEndTag = aiText.includes('[/EMOTION_SCORES]');
+    
+    if (hasStartTag && !hasEndTag) {
+      console.log("JSON 자동 복구 시도");
+      const startIndex = aiText.indexOf('[EMOTION_SCORES]');
+      const jsonPart = aiText.substring(startIndex);
+      const lastCompleteObject = jsonPart.lastIndexOf(',"overall":');
+      
+      if (lastCompleteObject !== -1) {
+        const afterOverall = jsonPart.indexOf('}', lastCompleteObject);
+        if (afterOverall !== -1) {
+          const beforeJson = aiText.substring(0, startIndex);
+          const completeJson = jsonPart.substring(0, afterOverall + 1) + ']}';
+          aiText = beforeJson + '[EMOTION_SCORES]\n' + completeJson + '\n[/EMOTION_SCORES]';
+          console.log("JSON 자동 복구 완료");
+        }
+      }
+    }
+    
+    // 마크다운 제거
     aiText = removeMarkdown(aiText);
     
-    console.log("OpenAI API 호출 완료");
+    console.log("애착유형 맞춤 레포트 생성 완료");
     return aiText;
     
   } catch (error) {
     console.error("generateOpenAIReport 오류:", error);
     
-    // 개발용 모크 응답 (API 오류시 테스트용)
+    // 개발용 애착유형별 모크 데이터
     if (__DEV__) {
-      console.log("개발 모드: 모크 데이터 반환");
-      return `
-1. 일기 요약
+      const attachmentType = await getUserAttachmentType();
+      const typeNames = {
+        secure: '안정형',
+        anxious: '불안형',
+        avoidant: '회피형',
+        disorganized: '혼란형'
+      };
+      
+      const typeName = typeNames[attachmentType as keyof typeof typeNames] || '안정형';
+      
+      return `1. 요약
+${typeName}인 당신의 이번 주는 초반에는 안정적이었지만 주 후반으로 갈수록 ${typeName}의 특성이 뚜렷하게 나타나며 감정적 어려움을 겪었습니다. ${typeName}의 전형적인 패턴이 관찰되었습니다.
 
-이번 주는 전반적으로 안정적인 감정 상태를 보여주셨습니다. 일상의 작은 기쁨들을 찾으려는 노력이 보이며, 관계에 대한 고민도 함께 나타났습니다.
+2. ${typeName} 관점에서의 감정분석
+- 주요감정: 행복, 사랑, 불안
+- 애착 패턴: ${typeName}의 특성인 관계에서의 민감성과 확인 욕구가 이번 주 내내 나타났습니다. 특히 상대방의 반응에 대한 과도한 걱정이 불안감을 증폭시켰습니다.
+- 감정 변화: 초기 안정감에서 점진적 불안 증가는 ${typeName}의 전형적 패턴으로, 관계 안정성에 대한 확신이 흔들릴 때 나타나는 반응입니다.
+- 현재 상태: ${typeName}의 핵심 욕구인 안정적 연결감이 충족되지 않아 정서적 회복이 필요한 상태입니다.
 
+3. ${typeName}를 위한 맞춤 조언
+- 상대방 권장 행동: ${typeName}에게는 일관된 관심 표현과 예측 가능한 소통 패턴이 도움됩니다. 불안할 때 즉시 안심시켜 주세요.
+- 본인 개선점: ${typeName}의 특성을 이해하고 즉시 반응하는 습관을 개선해보세요. 감정이 올라올 때 10분 기다리기를 연습하세요.
+- ${typeName} 맞춤 실천법:
+  1) 불안한 순간에 즉시 연락하는 대신 10분 심호흡 후 차분하게 소통하기
+  2) 매일 관계에서 좋았던 점 3가지 적어보며 긍정 강화하기
 
-2. 심층 감정 분석
-
-◆ 주요 감정 키워드: 행복, 안정감, 약간의 불안, 사랑, 만족
-
-◆ 감정의 변화 과정:
-주초에는 약간의 불안감이 있었지만, 중반부터 점차 안정되는 모습을 보였습니다. 주말로 갈수록 행복감과 만족감이 증가했습니다.
-
-◆ 현재 심리 상태 평가:
-전반적으로 건강한 심리 상태를 유지하고 계십니다. 자신의 감정을 잘 인식하고 표현하는 능력이 있어 보입니다.
-
-◆ 심리적 원인 분석:
-일상의 작은 성취들과 소중한 사람과의 교감이 긍정적인 감정의 주요 원인으로 보입니다.
-
-
-3. 관계 조언 및 전문적 근거
-
-◆ 현재 관계 상태 진단:
-서로에 대한 애정과 관심이 충분히 표현되고 있는 건강한 관계 상태입니다.
-
-◆ 상대방에게 추천하는 행동:
-→ 구체적 행동: 더 적극적인 감정 표현과 공감적 듣기
-→ 전문적 근거: 고트만 박사의 연구에 따르면 긍정적 상호작용이 관계 만족도를 높입니다.
-
-◆ 사용자가 개선하면 좋은 점:
-→ 구체적 행동: 감정을 더 구체적으로 표현하기
-→ 전문적 근거: 명확한 감정 표현은 관계의 투명성과 친밀감을 증진시킵니다.
-
-◆ 실천 가능한 조언:
-
-1) 첫 번째 조언: 매일 감사한 일 3가지 나누기
-   • 전문적 근거: 긍정심리학 연구에서 감사 표현이 관계 만족도를 높인다고 입증되었습니다.
-
-2) 두 번째 조언: 주 1회 이상 깊은 대화 시간 갖기
-   • 전문적 근거: 정기적인 깊은 대화는 정서적 친밀감을 강화시킵니다.
-
-3) 세 번째 조언: 서로의 스트레스 상황에 적극적으로 공감하기
-   • 전문적 근거: 공감적 반응은 스트레스를 줄이고 관계 결속력을 높입니다.
+4. 다음 주 ${typeName} 관계 미션
+- 매일 감정 체크인: "지금 내가 느끼는 것은?" 하루 3번 물어보기
+- 확인 욕구 조절: 궁금한 것 있을 때 바로 묻지 말고 하루 모아서 정리해서 대화하기
+- 자기 돌봄 루틴: ${typeName}에게 필요한 안정감을 위해 규칙적인 개인 시간 갖기
 
 [EMOTION_SCORES]
-{
-  "emotionScores": [
-    {
-      "day": "월요일",
-      "happiness": 7.2,
-      "anxiety": 3.8,
-      "sadness": 2.5,
-      "anger": 1.2,
-      "love": 8.0,
-      "overall": 7.0
-    },
-    {
-      "day": "화요일",
-      "happiness": 6.8,
-      "anxiety": 4.2,
-      "sadness": 3.1,
-      "anger": 2.0,
-      "love": 7.5,
-      "overall": 6.5
-    },
-    {
-      "day": "수요일",
-      "happiness": 8.0,
-      "anxiety": 2.5,
-      "sadness": 1.8,
-      "anger": 1.0,
-      "love": 8.5,
-      "overall": 7.8
-    },
-    {
-      "day": "목요일",
-      "happiness": 7.5,
-      "anxiety": 3.0,
-      "sadness": 2.2,
-      "anger": 1.5,
-      "love": 8.2,
-      "overall": 7.3
-    },
-    {
-      "day": "금요일",
-      "happiness": 8.5,
-      "anxiety": 2.0,
-      "sadness": 1.5,
-      "anger": 0.8,
-      "love": 9.0,
-      "overall": 8.2
-    },
-    {
-      "day": "토요일",
-      "happiness": 9.0,
-      "anxiety": 1.5,
-      "sadness": 1.0,
-      "anger": 0.5,
-      "love": 9.2,
-      "overall": 8.8
-    },
-    {
-      "day": "일요일",
-      "happiness": 8.2,
-      "anxiety": 2.2,
-      "sadness": 1.8,
-      "anger": 1.0,
-      "love": 8.8,
-      "overall": 8.0
-    }
-  ]
-}
-[/EMOTION_SCORES]
-      `;
+{"emotionScores":[{"day":"월요일","happiness":7.5,"anxiety":3.2,"sadness":2.1,"anger":1.5,"love":8.0,"overall":7.2},{"day":"화요일","happiness":8.0,"anxiety":2.0,"sadness":1.8,"anger":1.0,"love":8.5,"overall":7.9},{"day":"수요일","happiness":7.8,"anxiety":3.5,"sadness":3.0,"anger":2.0,"love":7.0,"overall":6.8},{"day":"목요일","happiness":6.5,"anxiety":4.0,"sadness":4.5,"anger":3.2,"love":5.0,"overall":4.8},{"day":"금요일","happiness":5.0,"anxiety":6.0,"sadness":6.5,"anger":4.0,"love":3.0,"overall":4.9},{"day":"토요일","happiness":4.5,"anxiety":7.0,"sadness":7.8,"anger":5.0,"love":2.5,"overall":5.6},{"day":"일요일","happiness":3.5,"anxiety":7.8,"sadness":8.4,"anger":6.2,"love":2.0,"overall":4.9}]}
+[/EMOTION_SCORES]`;
     }
     
     throw error;
